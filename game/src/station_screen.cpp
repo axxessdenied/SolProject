@@ -10,6 +10,7 @@
 
 namespace game {
 
+using sol::ui::CaptainRow;
 using sol::ui::Color;
 using sol::ui::Column;
 using sol::ui::FactionRow;
@@ -36,7 +37,22 @@ constexpr float kTabHeight = 34.0f;
 constexpr float kFooterHeight = 40.0f;
 constexpr float kSectionHeight = 26.0f;
 constexpr float kButtonWidth = 78.0f;
-constexpr float kNumberWidth = 82.0f;
+// ⚑⚑⚑⚑ 82 UNTIL THE PHASE 39 STAGE A FLIGHT, WHERE THE SHIPYARD DREW
+// "50000 cr" FOR A HULL THAT COSTS 60,000. This is Phase 33's contraband-tag
+// lesson arriving on a different column, and the identical failure: the cell is
+// drawn RIGHT-ALIGNED, so an overflow eats the START of the string rather than
+// the end - which is why it reads as a plausible smaller number instead of as
+// damage. Eight glyphs ("24000 cr", "60000 cr") overflowed 82 px by about one
+// glyph; seven ("9200 cr", "8000 cr") fit. 100 clears nine, which covers a
+// six-figure hull value.
+//
+// ⚑⚑⚑ PRE-EXISTING SINCE PHASE 8a AND FOUND BY A DRIVE RATHER THAN BY A
+// TEST, for the reason Phase 33 already wrote down: the synthetic test font
+// ships only `hud` and `heading` styles, so a width assertion in `ui.unit`
+// would be measuring a different font from the one the game draws. The
+// instrument for this column is a screenshot, and the stage that added a second
+// reader of it is the stage that noticed.
+constexpr float kNumberWidth = 100.0f;
 
 // Campaign missions read gold on the board, the same tell the dev screen used.
 constexpr Color kCampaign = rgba(0xF2CC59FFu);
@@ -717,16 +733,21 @@ void buildShipyardTab(UiContext& ui, StationPanel& panel, StationScreenState& st
         ui.pushId(i);
 
         clipped(ui, cells.name, ship.name, theme.textPrimary, theme.strongStyle);
+        // ⚑ WHO HOLDS IT BEATS WHERE IT IS (Phase 39 stage A): a hull with a
+        // captain on it is the one fact that changes what the buttons below
+        // will do, and "stored here" would be true of it as well.
+        const bool held = ship.captain[0] != '\0';
         clipped(ui,
                 cells.detail,
-                ship.active ? "active" : (ship.storedHere ? "stored here" : "stored elsewhere"),
-                ship.active ? theme.accent : theme.textDim);
+                held ? ship.captain
+                     : (ship.active ? "active" : (ship.storedHere ? "stored here" : "stored elsewhere")),
+                (ship.active || held) ? theme.accent : theme.textDim);
         std::snprintf(buffer, sizeof(buffer), "%.0f cr", static_cast<double>(ship.value));
         clipped(ui, cells.price, buffer, theme.textPrimary, theme.bodyStyle, TextAlign::Right);
 
         // Only a ship parked at this station can be switched to or sold; the
         // rest are listed so the fleet is still legible from anywhere.
-        const bool here = !ship.active && ship.storedHere;
+        const bool here = !ship.active && ship.storedHere && !held;
         if (ui.button(inset(cells.primary, 2.0f), "Switch", here)) {
             panel.action = {.kind = StationAction::Kind::SwitchShip, .index = i};
         }
@@ -762,16 +783,146 @@ void buildShipyardTab(UiContext& ui, StationPanel& panel, StationScreenState& st
 
 // --- Crew ---
 
+// One person, employed or on offer. Deliberately the same five-column shape the
+// catalogs and `mountList` use, and the selection marker is `mountList`'s `> `
+// for the same reason: a player reading down this tab should not have to
+// re-learn what a highlighted row looks like.
+struct CaptainClick
+{
+    int row = -1;
+    bool secondary = false;
+};
+
+[[nodiscard]] CaptainClick captainList(UiContext& ui,
+                                       Column& column,
+                                       std::string_view id,
+                                       std::span<const CaptainRow> rows,
+                                       const char* primary,
+                                       const char* secondary,
+                                       const char* empty)
+{
+    CaptainClick click;
+    if (rows.empty()) {
+        emptyNote(ui, column, empty);
+        return click;
+    }
+    ui.pushId(id);
+    char buffer[160] = {};
+    for (int i = 0; i < static_cast<int>(rows.size()); ++i) {
+        const CaptainRow& person = rows[static_cast<std::size_t>(i)];
+        const Rect row = column.row(kRowHeight);
+        rowBackground(ui, row, i);
+        const CatalogCells cells = catalogCells(ui, row, false, secondary != nullptr);
+        ui.pushId(i);
+
+        std::snprintf(buffer, sizeof(buffer), "%s%s", person.selected ? "> " : "  ", person.name);
+        clipped(ui, cells.name, buffer, ui.theme().textPrimary, ui.theme().strongStyle);
+        clipped(ui, cells.detail, person.detail, ui.theme().textDim);
+        if (ui.button(inset(cells.primary, 2.0f), primary)) {
+            click = {.row = i, .secondary = false};
+        }
+        // ⚑⚑ A CAPTAIN HOLDING A HULL CANNOT BE DISMISSED, AND THE BUTTON
+        // SAYS SO BY BEING GREY RATHER THAN BY VANISHING - Phase 28's decision
+        // 3, and the only channel a refusal has here, because a station action
+        // carries no way to report one back.
+        if (secondary != nullptr && ui.button(inset(cells.secondary, 2.0f), secondary, !person.assigned)) {
+            click = {.row = i, .secondary = true};
+        }
+
+        ui.popId();
+    }
+    ui.popId();
+    return click;
+}
+
 void buildCrewTab(UiContext& ui, StationPanel& panel, StationScreenState& state, const Rect& content)
 {
     const auto& theme = ui.theme();
     const bool hires = stationOffers(panel, StationScreenState::Crew);
+    // ⚑ Which hulls a Give would be legal for: parked on THIS dock, not the
+    // one you are flying, and nobody else's. Counted here so the section can
+    // be left out entirely when there is nothing to hand over.
+    std::size_t giveable = 0;
+    for (const FleetRow& ship : panel.fleet) {
+        giveable += (!ship.active && ship.storedHere) ? 1u : 0u;
+    }
+    const bool hasCaptains = !panel.captains.empty() || hires;
     const float contentHeight =
-        (kSectionHeight + theme.spacing) * 2.0f +
+        (kSectionHeight + theme.spacing) * (hasCaptains ? 5.0f : 2.0f) +
+        (hasCaptains ? listHeight(ui, std::max<std::size_t>(panel.captains.size(), 1)) +
+                           listHeight(ui, std::max<std::size_t>(giveable, 1)) +
+                           listHeight(ui, hires ? std::max<std::size_t>(panel.captainHires.size(), 1) : 1)
+                     : 0.0f) +
         listHeight(ui, std::max<std::size_t>(panel.crewAboard.size(), 1)) +
         listHeight(ui, hires ? std::max<std::size_t>(panel.crewCatalog.size(), 1) : 1);
     const Rect list = ui.beginScroll(content, contentHeight, state.scroll[StationScreenState::Crew]);
     Column column(list, 0.0f, theme.spacing);
+
+    if (hasCaptains) {
+        sectionHeader(ui, column.row(kSectionHeight), "Captains");
+        const CaptainClick employed = captainList(
+            ui, column, "captains", panel.captains, "Select", "Dismiss", "(nobody flies for you yet)");
+        if (employed.row >= 0) {
+            const bool holds = panel.captains[static_cast<std::size_t>(employed.row)].assigned;
+            if (employed.secondary) {
+                panel.action = {.kind = StationAction::Kind::DismissCaptain, .index = employed.row};
+            } else if (holds) {
+                // Selecting somebody who already has a ship would aim the Give
+                // buttons at a captain no hull could legally go to, so the
+                // primary means "hand it back" on those rows instead.
+                panel.action = {.kind = StationAction::Kind::RecallCaptain, .index = employed.row};
+            } else {
+                panel.action = {.kind = StationAction::Kind::SelectCaptain, .index = employed.row};
+            }
+        }
+
+        sectionHeader(ui, column.row(kSectionHeight), "Ships parked here");
+        if (giveable == 0) {
+            emptyNote(ui, column, "(no ship of yours is parked on this dock)");
+        } else {
+            ui.pushId("give");
+            char buffer[96] = {};
+            for (int i = 0; i < static_cast<int>(panel.fleet.size()); ++i) {
+                const FleetRow& ship = panel.fleet[static_cast<std::size_t>(i)];
+                if (ship.active || !ship.storedHere) {
+                    continue;
+                }
+                const Rect row = column.row(kRowHeight);
+                rowBackground(ui, row, i);
+                const CatalogCells cells = catalogCells(ui, row, true, false);
+                ui.pushId(i);
+                clipped(ui, cells.name, ship.name, ui.theme().textPrimary, theme.strongStyle);
+                clipped(ui,
+                        cells.detail,
+                        ship.captain[0] != '\0' ? ship.captain : "unassigned",
+                        ship.captain[0] != '\0' ? theme.accent : theme.textDim);
+                std::snprintf(buffer, sizeof(buffer), "%.0f cr", static_cast<double>(ship.value));
+                clipped(ui, cells.price, buffer, theme.textPrimary, theme.bodyStyle, TextAlign::Right);
+                const bool free = ship.captain[0] == '\0';
+                if (ui.button(inset(cells.primary, 2.0f), "Give", free && panel.selectedCaptain >= 0)) {
+                    panel.action = {.kind = StationAction::Kind::AssignCaptain, .index = i};
+                }
+                ui.popId();
+            }
+            ui.popId();
+        }
+
+        sectionHeader(ui, column.row(kSectionHeight), "Looking for a berth");
+        if (!hires) {
+            emptyNote(ui, column, "(no crew hall here - nobody is looking for a berth)");
+        } else {
+            const CaptainClick hire = captainList(ui,
+                                                  column,
+                                                  "hall",
+                                                  panel.captainHires,
+                                                  "Hire",
+                                                  nullptr,
+                                                  "(everybody here already flies for you)");
+            if (hire.row >= 0) {
+                panel.action = {.kind = StationAction::Kind::HireCaptain, .index = hire.row};
+            }
+        }
+    }
 
     sectionHeader(ui, column.row(kSectionHeight), "Aboard");
     const CatalogClick aboard = catalogList(ui,

@@ -1693,6 +1693,84 @@ std::string listFleet(GameContent& content)
     return lines;
 }
 
+// --- Captains (Phase 39 stage A) --------------------------------------------
+//
+// ⚑⚑⚑ `sol.captains()` IS THE STAGE'S EXIT, AND IT REPORTS A COUNT AND A
+// PAIRING RATHER THAN A STATE. Phase 38's audio bug is the reason: a readout
+// that says "the device is there" survived eleven phases while the game was
+// silent, because nothing ever printed the NUMBER. So this says how many people
+// are in your employ, who each of them is, and exactly which hull they hold -
+// the three facts a stage-B route will be wrong about first.
+std::string listCaptains(GameContent& content)
+{
+    SpaceWorld& world = content.world();
+    if (world.captains().empty()) {
+        return "no captains";
+    }
+    std::string lines = std::to_string(world.captains().size()) + " captain(s)";
+    for (std::size_t i = 0; i < world.captains().size(); ++i) {
+        const game::Captain& captain = world.captains()[i];
+        lines += "\n" + std::to_string(i + 1) + ": " + captain.name + " (" + captain.trade + "), " +
+                 std::to_string(static_cast<int>(captain.cut * 100.0f + 0.5f)) + "% of takings - ";
+        if (captain.ship < world.fleet().size()) {
+            const game::OwnedShip& ship = world.fleet()[captain.ship];
+            const auto& systems = world.galaxy().systems;
+            lines += "flying " + ship.defId + " (fleet " + std::to_string(captain.ship + 1) + ")";
+            if (ship.storedSystem < systems.size()) {
+                lines += " at " + systems[ship.storedSystem].name;
+            }
+        } else {
+            lines += "no ship";
+        }
+    }
+    return lines;
+}
+
+// Who is looking for a berth on this dock. Numbered from 1 so the number the
+// player reads is the number `sol.hire_captain` takes.
+std::string listCaptainHall(GameContent& content)
+{
+    std::vector<game::CaptainCandidate> hall;
+    content.world().captainCandidates(hall);
+    if (hall.empty()) {
+        return content.world().isDocked() ? "no crew hall here" : "not docked";
+    }
+    std::string lines;
+    for (std::size_t i = 0; i < hall.size(); ++i) {
+        if (!lines.empty()) {
+            lines += "\n";
+        }
+        lines += std::to_string(i + 1) + ": " + hall[i].name + " (" + hall[i].trade + "), " +
+                 std::to_string(static_cast<int>(hall[i].cut * 100.0f + 0.5f)) + "% of takings";
+    }
+    return lines;
+}
+
+// ⚑ All four take the number the listings print, so a console session reads
+// the same way it looks. The world's calls are 0-based; the conversion is here
+// and nowhere else.
+bool hireCaptain(GameContent& content, double slot)
+{
+    return slot >= 1.0 && content.world().hireCaptain(static_cast<std::size_t>(slot) - 1);
+}
+
+bool dismissCaptain(GameContent& content, double captain)
+{
+    return captain >= 1.0 && content.world().dismissCaptain(static_cast<std::size_t>(captain) - 1);
+}
+
+bool assignCaptain(GameContent& content, double captain, double fleetSlot)
+{
+    return captain >= 1.0 && fleetSlot >= 1.0 &&
+           content.world().assignCaptain(static_cast<std::size_t>(captain) - 1,
+                                         static_cast<std::size_t>(fleetSlot) - 1);
+}
+
+bool recallCaptain(GameContent& content, double captain)
+{
+    return captain >= 1.0 && content.world().recallCaptain(static_cast<std::size_t>(captain) - 1);
+}
+
 // ⚑ ONE VERB PAIR, because after Phase 31 stage B there is one thing to do:
 // put a fitting in a mount. `sol.buy_component`, `sol.sell_component` and
 // `sol.buy_weapon` are gone rather than aliased - a component and a weapon
@@ -4196,6 +4274,12 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&selectShip>("sol", "select_ship", this);
     m_vm.registerFunction<&hireCrew>("sol", "hire_crew", this);
     m_vm.registerFunction<&fireCrew>("sol", "fire_crew", this);
+    m_vm.registerFunction<&listCaptains>("sol", "captains", this);
+    m_vm.registerFunction<&listCaptainHall>("sol", "crew_hall", this);
+    m_vm.registerFunction<&hireCaptain>("sol", "hire_captain", this);
+    m_vm.registerFunction<&dismissCaptain>("sol", "dismiss_captain", this);
+    m_vm.registerFunction<&assignCaptain>("sol", "assign_captain", this);
+    m_vm.registerFunction<&recallCaptain>("sol", "recall_captain", this);
     m_vm.registerFunction<&insuranceQuote>("sol", "insurance_quote", this);
     m_vm.registerFunction<&addCredits>("sol", "add_credits", this);
     m_vm.registerFunction<&warpOffset>("sol", "warp", this);

@@ -211,7 +211,13 @@ constexpr std::uint32_t kSaveMagic = 0x37'4c'4f'53u; // "SOL7"
 // smallest field this phase could have added, and the one without which a save
 // taken mid-retreat loads a world that discards its cooling bubbles on the
 // first tick.
-constexpr std::uint32_t kSaveVersion = 38;
+// ⚑⚑ v39 (Phase 39 stage A): the captains in your employ. A person you
+// hired is the one thing about them that is NOT derivable - who is standing
+// in a crew hall is a pure function of the dock and the seed, and is
+// re-rolled on load exactly as the cast's seating is - so this writes
+// `m_captains` and nothing else. The hall filters against it, which is why
+// there is no second list of who has been taken.
+constexpr std::uint32_t kSaveVersion = 39;
 
 // ---------------------------------------------------------------------------
 // ⚑⚑⚑⚑ WHAT THE AUTHORED HALF OF THIS GALAXY WAS MADE OF, IN EIGHT BYTES
@@ -1198,6 +1204,34 @@ constexpr std::uint64_t kCompositionStream = 2'000'000;
 // independent edits, and sharing a stream would make adding a `[[character]]`
 // row rename every regular in the galaxy.
 constexpr std::uint64_t kCastStream = 4'000'000;
+
+// And the one the crew halls come out of (Phase 39 stage A). A FOURTH stream,
+// for the third one's reason restated once more: who is drinking in a room and
+// who is looking for a berth are independent edits, and sharing the cast's
+// stream would make adding a `[[character]]` row re-roll every captain on
+// offer in the galaxy.
+constexpr std::uint64_t kCaptainStream = 5'000'000;
+
+// What a captain FLEW before you met them.
+//
+// ⚑⚑ A ROLLED TABLE HERE WHERE `regularTrade` REFUSED ONE, AND THE
+// DIFFERENCE IS REAL RATHER THAN A LAPSE. A regular's trade is read off the
+// station's own composition because a regular IS the room - a prospector on a
+// mine is content the composer already paid for. Somebody standing in a crew
+// hall looking for a berth is passing THROUGH: their history is not this
+// station's, and reading it off the dock would make every captain in a mining
+// system an ex-prospector, which says something false rather than something
+// free.
+constexpr const char* kCaptainTrades[] = {
+    "Long hauler",
+    "Ex-navy",
+    "Freighter master",
+    "Belt runner",
+    "Convoy escort",
+    "Yard test pilot",
+    "Tramp skipper",
+    "Survey pilot",
+};
 
 void SpaceWorld::composeStations()
 {
@@ -7604,12 +7638,37 @@ bool SpaceWorld::sellShip(std::size_t fleetIndex, std::string* outError)
     if (ship.storedSystem != m_currentSystem || ship.storedStation != m_dockedStation) {
         return refuse("that ship is stored elsewhere", outError);
     }
+    // ⚑⚑⚑⚑ A HULL SOMEBODY IS FLYING IS NOT YOURS TO SELL (Phase 39
+    // stage A). In this stage it is only tidiness; from stage B on the hull is
+    // in another system on a route, and selling it out from under its captain
+    // would delete a ship that is mid-haul with no death path and no wreck -
+    // the same shape as the eviction hazard the phase spec's risk register
+    // names. Refused with a reason rather than silently unassigning.
+    // ⚑⚑⚑⚑ A HULL SOMEBODY IS FLYING IS NOT YOURS TO SELL (Phase 39
+    // stage A). In this stage it is only tidiness; from stage B on the hull is
+    // in another system on a route, and selling it out from under its captain
+    // would delete a ship that is mid-haul with no death path and no wreck -
+    // the same shape as the eviction hazard the phase spec's risk register
+    // names. Refused with a reason rather than silently unassigning.
+    if (const Captain* holder = captainOf(fleetIndex); holder != nullptr) {
+        return refuse("'" + holder->name + "' is flying that ship - recall them first", outError);
+    }
     const double refund = kResaleRate * shipValue(ship);
     SOL_LOG_INFO("sold '%s' (+%.0f cr)", ship.defId.c_str(), refund);
     m_playerCredits += refund;
     m_fleet.erase(m_fleet.begin() + static_cast<std::ptrdiff_t>(fleetIndex));
     if (m_activeShip > fleetIndex) {
         --m_activeShip;
+    }
+    // ⚑⚑⚑ AND EVERY CAPTAIN'S INDEX SHIFTS WITH IT, exactly as
+    // `m_activeShip` does one line up. `Captain::ship` is a fleet index and an
+    // erase renumbers the tail; without this a captain silently inherits the
+    // hull that moved into the slot. The guard above means none of them can be
+    // holding THIS one, so the equal case cannot arise and is not written.
+    for (Captain& captain : m_captains) {
+        if (captain.ship != kNoIndex && captain.ship > fleetIndex) {
+            --captain.ship;
+        }
     }
     return true;
 }
@@ -7689,6 +7748,175 @@ bool SpaceWorld::fireCrew(const char* crewId, std::string* outError)
     ship.crewIds.erase(it); // hires are one-time fees: no refund
     applyActiveLoadout();
     SOL_LOG_INFO("dismissed '%s'", crewId);
+    return true;
+}
+
+// --- Captains (Phase 39 stage A) --------------------------------------------
+
+const Captain* SpaceWorld::captainOf(std::size_t fleetIndex) const
+{
+    for (const Captain& captain : m_captains) {
+        if (captain.ship == static_cast<std::uint32_t>(fleetIndex)) {
+            return &captain;
+        }
+    }
+    return nullptr;
+}
+
+void SpaceWorld::captainCandidates(std::vector<CaptainCandidate>& out) const
+{
+    out.clear();
+    if (!isDocked()) {
+        return;
+    }
+    const std::uint32_t crewBit = 1u << static_cast<std::uint32_t>(assets::StationScreen::Crew);
+    if ((dockedStationScreens() & crewBit) == 0) {
+        return; // no crew hall on this dock: nobody is looking for a berth here
+    }
+
+    // Derived from the seed and never saved, exactly as the cast's seating is.
+    // The system and the station are folded into the SEED rather than drawn
+    // from one galaxy-wide stream, so a hall's roster is a pure function of the
+    // dock you are standing on - which is what lets a test ask a specific hall
+    // the same question twice and lets a player remember where the cheap
+    // captain was.
+    core::Rng rng(m_universeSeed ^ (static_cast<std::uint64_t>(m_currentSystem) << 32u) ^
+                      static_cast<std::uint64_t>(m_dockedStation),
+                  kCaptainStream);
+
+    char id[64] = {};
+    for (std::uint32_t slot = 0; slot < kCaptainsPerHall; ++slot) {
+        // ⚑⚑⚑ ALL FOUR DRAWS ARE TAKEN BEFORE ANYTHING IS SKIPPED, and it
+        // is `assignCast`'s rule restated: drawing only for slots that survive
+        // the filter would make the stream depend on WHO the player has
+        // already hired, so hiring the first captain in a hall would re-roll
+        // the two standing beside him. Two wasted draws buy a roster whose
+        // contents are a function of the dock and nothing else.
+        const std::uint32_t given = rng.range(static_cast<std::uint32_t>(std::size(kGivenNames)));
+        const std::uint32_t family = rng.range(static_cast<std::uint32_t>(std::size(kFamilyNames)));
+        const std::uint32_t trade = rng.range(static_cast<std::uint32_t>(std::size(kCaptainTrades)));
+        const float cut = rng.rangeFloat(kCaptainCutMin, kCaptainCutMax);
+
+        std::snprintf(id, sizeof(id), "cap:%u:%u:%u", m_currentSystem, m_dockedStation, slot);
+        const std::uint64_t who = castKeyForCharacter(id);
+        // Already in your employ: they are not standing in the hall. Nothing
+        // else is kept - a captain you DISMISS falls out of `m_captains` and is
+        // therefore on offer again, which is honest and costs no storage.
+        const bool hired = std::any_of(
+            m_captains.begin(), m_captains.end(), [who](const Captain& c) { return c.who == who; });
+        if (hired) {
+            continue;
+        }
+        out.push_back({.name = std::string(kGivenNames[given]) + " " + kFamilyNames[family],
+                       .trade = kCaptainTrades[trade],
+                       .who = who,
+                       .cut = cut});
+    }
+}
+
+bool SpaceWorld::hireCaptain(std::size_t candidateIndex, std::string* outError)
+{
+    if (!isDocked()) {
+        return refuse("must be docked to hire a captain", outError);
+    }
+    std::vector<CaptainCandidate> hall;
+    captainCandidates(hall);
+    if (hall.empty()) {
+        return refuse("no crew hall here - nobody is looking for a berth", outError);
+    }
+    if (candidateIndex >= hall.size()) {
+        return refuse("no such candidate", outError);
+    }
+    const CaptainCandidate& pick = hall[candidateIndex];
+    m_captains.push_back({.name = pick.name, .trade = pick.trade, .who = pick.who, .cut = pick.cut});
+    SOL_LOG_INFO("hired %s (%s) at %s, %.0f%% of takings",
+                 pick.name.c_str(),
+                 pick.trade.c_str(),
+                 dockedStationName(),
+                 static_cast<double>(pick.cut) * 100.0);
+    return true;
+}
+
+bool SpaceWorld::dismissCaptain(std::size_t captainIndex, std::string* outError)
+{
+    if (!isDocked()) {
+        return refuse("must be docked to dismiss a captain", outError);
+    }
+    if (captainIndex >= m_captains.size()) {
+        return refuse("no such captain", outError);
+    }
+    const Captain& captain = m_captains[captainIndex];
+    if (captain.ship != kNoIndex) {
+        return refuse("'" + captain.name + "' is holding a ship - recall them first", outError);
+    }
+    SOL_LOG_INFO("dismissed captain %s", captain.name.c_str());
+    m_captains.erase(m_captains.begin() + static_cast<std::ptrdiff_t>(captainIndex));
+    return true;
+}
+
+bool SpaceWorld::assignCaptain(std::size_t captainIndex, std::size_t fleetIndex, std::string* outError)
+{
+    if (!isDocked()) {
+        return refuse("must be docked to give a captain a ship", outError);
+    }
+    if (captainIndex >= m_captains.size()) {
+        return refuse("no such captain", outError);
+    }
+    if (fleetIndex >= m_fleet.size()) {
+        return refuse("no such ship", outError);
+    }
+    if (fleetIndex == m_activeShip) {
+        return refuse("that is the ship you are flying", outError);
+    }
+    const OwnedShip& ship = m_fleet[fleetIndex];
+    // ⚑⚑ THE SAME STATION, NOT MERELY THE SAME SYSTEM - `sellShip`'s and
+    // `switchShip`'s rule, and here it earns itself twice over: a captain has
+    // to physically take the ship, so both of you have to be standing on the
+    // dock it is parked at.
+    if (ship.storedSystem != m_currentSystem || ship.storedStation != m_dockedStation) {
+        return refuse("that ship is stored elsewhere", outError);
+    }
+    if (const Captain* holder = captainOf(fleetIndex); holder != nullptr) {
+        return refuse("'" + holder->name + "' already has that ship", outError);
+    }
+    Captain& captain = m_captains[captainIndex];
+    if (captain.ship != kNoIndex) {
+        return refuse("'" + captain.name + "' already has a ship", outError);
+    }
+    captain.ship = static_cast<std::uint32_t>(fleetIndex);
+    SOL_LOG_INFO("%s takes '%s' at %s", captain.name.c_str(), ship.defId.c_str(), dockedStationName());
+    return true;
+}
+
+bool SpaceWorld::recallCaptain(std::size_t captainIndex, std::string* outError)
+{
+    if (!isDocked()) {
+        return refuse("must be docked to recall a captain", outError);
+    }
+    if (captainIndex >= m_captains.size()) {
+        return refuse("no such captain", outError);
+    }
+    Captain& captain = m_captains[captainIndex];
+    if (captain.ship == kNoIndex) {
+        return refuse("'" + captain.name + "' has no ship", outError);
+    }
+    // ⚑⚑⚑ BOUNDS-CHECKED RATHER THAN TRUSTED, AND THE MUTATION PASS IS
+    // WHY. `sellShip` refuses to sell a hull somebody is holding, so this index
+    // cannot dangle - which made this line a correctness property held up by a
+    // guard in a different function, with nothing here saying so. Breaking that
+    // guard did not produce a failing check: it produced `vector subscript out
+    // of range` and killed the process before the checks could print. Same
+    // lesson as Phase 38 stage C's dangling `targetIndex`: say it where it is
+    // relied on.
+    if (captain.ship >= m_fleet.size()) {
+        return refuse("'" + captain.name + "' has no ship", outError);
+    }
+    const OwnedShip& ship = m_fleet[captain.ship];
+    if (ship.storedSystem != m_currentSystem || ship.storedStation != m_dockedStation) {
+        return refuse("'" + captain.name + "' is not here - their ship is stored elsewhere", outError);
+    }
+    SOL_LOG_INFO("%s hands back '%s'", captain.name.c_str(), ship.defId.c_str());
+    captain.ship = kNoIndex;
     return true;
 }
 
@@ -12522,6 +12750,18 @@ bool SpaceWorld::saveTo(const char* path, std::string_view displayName)
         writer.write(ship.storedSystem);
         writer.write(ship.storedStation);
     }
+    // Captains (v39). The NAME is written rather than a def id, because a
+    // captain's name exists in no def - it is drawn from the same syllable
+    // tables the cast uses - and that is what makes "a person is a new kind of
+    // save-format promise" a risk this stage does not have to carry.
+    writer.write(static_cast<std::uint32_t>(m_captains.size()));
+    for (const Captain& captain : m_captains) {
+        writer.writeString(captain.name);
+        writer.writeString(captain.trade);
+        writer.write(captain.who);
+        writer.write(captain.ship);
+        writer.write(captain.cut);
+    }
     m_economy.save(writer);
     m_factionSim.save(writer); // v5: relations, war flags, standings, raids
     m_missions.save(writer);   // v6: journal, board, campaign stage
@@ -12690,6 +12930,33 @@ bool SpaceWorld::loadFrom(const char* path)
             return false;
         }
     }
+    // Captains (v39).
+    //
+    // ⚑⚑⚑ THE ONE INVARIANT WORTH REFUSING A FILE OVER IS THAT TWO
+    // CAPTAINS CANNOT HOLD ONE HULL, and it is the same shape as the two-players
+    // -in-one-sky check v37 added. `Captain::ship` is a fleet index; a file that
+    // names the same one twice, or names one past the end, describes a fleet
+    // this code cannot represent - and the failure it would otherwise produce is
+    // silent, because both captains would simply appear to fly the same ship.
+    std::uint32_t captainCount = 0;
+    if (!reader.read(captainCount) || captainCount > fleetCount) {
+        return false; // more captains than hulls: nobody could be holding them all
+    }
+    std::vector<Captain> captains(captainCount);
+    std::vector<std::uint8_t> held(fleetCount, 0u);
+    for (Captain& captain : captains) {
+        if (!reader.readString(captain.name) || !reader.readString(captain.trade) ||
+            !reader.read(captain.who) || !reader.read(captain.ship) || !reader.read(captain.cut)) {
+            return false;
+        }
+        if (captain.ship == kNoIndex) {
+            continue;
+        }
+        if (captain.ship >= fleetCount || captain.ship == activeIndex || held[captain.ship] != 0u) {
+            return false;
+        }
+        held[captain.ship] = 1u;
+    }
     // The economy layout is derived from galaxy+params; rebuild it against
     // the (possibly regenerated) galaxy, then restore its dynamic state.
     if (!m_economyParams.commodities.empty()) {
@@ -12823,6 +13090,7 @@ bool SpaceWorld::loadFrom(const char* path)
     m_hardcoreDeathPending = false;
     m_fleet = std::move(fleet);
     m_activeShip = activeIndex;
+    m_captains = std::move(captains);
     if (galaxyChanged) {
         // Recompute the new-game anchor (hardcore respawn) for this galaxy.
         m_startSystem = 0;

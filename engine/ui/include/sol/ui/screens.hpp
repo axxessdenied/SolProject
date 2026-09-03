@@ -425,6 +425,27 @@ struct FleetRow
     bool active = false;
     bool storedHere = false; // stored at THIS station (switch/sell allowed)
     float value = 0.0f;      // hull + fit at list price
+    // Who flies it, or empty for a hull nobody has been given (Phase 39 stage
+    // A). A NAME rather than a bool, because the two screens that read this
+    // both have to say WHO: the Shipyard greys Sell against a person, and the
+    // Crew tab greys Give against one.
+    const char* captain = "";
+};
+
+// One person in your employ, or one standing in the crew hall (Phase 39
+// stage A). The same row type for both, because the two lists differ in what
+// the BUTTON does rather than in what a person is.
+//
+// ⚑⚑ `selected` IS IN, NOT OUT, and it is `StationPanel::selectedMount`'s
+// rule one list along: which captain the player is holding is a thing the
+// SCREEN owns, and it is handed to the fill so that one place decides which
+// hulls a Give would be legal for.
+struct CaptainRow
+{
+    const char* name = "";
+    const char* detail = ""; // trade, ship and cut - prebuilt
+    bool assigned = false;   // holds a hull: cannot be dismissed
+    bool selected = false;
 };
 
 // One faction's standing line for the Factions tab (Phase 8b).
@@ -770,6 +791,15 @@ struct StationAction
         OrderRefine,    // Phase 8f: units carries the order size
         CollectRefined,
         BuyMarketIntel, // Phase 8g: price lists for the markets in reach
+        // Captains (Phase 39 stage A). `SelectCaptain` carries `index` into
+        // the employed list and is the only one of the five that changes no
+        // world state - it moves the screen's own selection, exactly as the
+        // Outfitting tab's mount `Select` does.
+        SelectCaptain,
+        HireCaptain,    // index = the crew hall's candidate slot
+        DismissCaptain, // index = the employed captain
+        AssignCaptain,  // index = the FLEET slot; the captain is the selection
+        RecallCaptain,  // index = the employed captain
     };
     Kind kind = Kind::None;
     const char* id = "";    // def id (component/weapon/ship/crew actions)
@@ -813,6 +843,12 @@ struct StationPanel
     std::span<const OutfitRow> crewAboard;
     std::span<const OutfitRow> shipCatalog;
     std::span<const FleetRow> fleet;
+    std::span<const CaptainRow> captains;     // in your employ (Phase 39 stage A)
+    std::span<const CaptainRow> captainHires; // standing in this dock's crew hall
+    // IN, not out: which captain the player has aimed the fleet list at, or -1.
+    // Same argument as `selectedMount` above - the screen owns it because it is
+    // a thing the player is holding rather than a thing the world knows.
+    int selectedCaptain = -1;
     std::span<const FactionRow> factions;       // standings (Phase 8b)
     const char* factionNotes = "";              // recent raids summary, prebuilt
     std::span<const MissionRow> missionOffers;  // the board (Phase 8c)

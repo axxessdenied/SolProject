@@ -263,6 +263,7 @@ add_executable(sol_game_tests
     test/assembly_tier_tests.cpp
     test/authored_system_tests.cpp
     test/autosave_settings_tests.cpp
+    test/captain_tests.cpp
     test/catalog_gate_tests.cpp
     test/command_mode_tests.cpp
     test/contraband_tests.cpp

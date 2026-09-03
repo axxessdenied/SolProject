@@ -40,6 +40,14 @@ struct StationScreenState
     // that produced it, and this one outlives a switch to a different ship. An
     // id that no longer names a mount simply stops matching.
     std::string selectedMount;
+    // Which captain the Crew tab's ship list is aimed at, or -1 (Phase 39
+    // stage A). An INDEX where `selectedMount` is an id, and the reason is the
+    // opposite of that field's: a mount id outlives a switch to a different
+    // ship, whereas a captain list is rebuilt every frame from one vector and
+    // has no stable name to hold. A stale index simply stops matching and the
+    // Give buttons grey themselves, which is the self-healing the fill relies
+    // on rather than an invariant anybody has to maintain.
+    int selectedCaptain = -1;
 };
 
 // Whether a tab belongs on THIS station's strip (Phase 34 stage C).

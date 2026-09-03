@@ -31,6 +31,8 @@ void fillStationOutfitting(const SpaceWorld& world,
                            std::vector<sol::ui::OutfitRow>& crewAboardRows,
                            std::vector<sol::ui::OutfitRow>& shipRows,
                            std::vector<sol::ui::FleetRow>& fleetRows,
+                           std::vector<sol::ui::CaptainRow>& captainRows,
+                           std::vector<sol::ui::CaptainRow>& captainHireRows,
                            std::vector<sol::ui::FactionRow>& factionRows);
 
 // Fills the Missions tab (Phase 8c): the board's offers (with the min_rep
@@ -179,6 +181,12 @@ void fillStationBar(std::span<const BarLine> talk,
 [[nodiscard]] std::string formatAge(double seconds);
 
 // Executes the (at most one) station-panel click of this frame.
-void executeStationAction(SpaceWorld& world, const sol::ui::StationAction& action);
+// ⚑⚑ `selectedCaptain` IS IN AND OUT, AND IT IS THE ONLY PIECE OF SCREEN
+// STATE THIS FUNCTION TOUCHES (Phase 39 stage A). `SelectCaptain` moves it and
+// `AssignCaptain` reads it, so both live here rather than half in the frame
+// loop: the alternative is a second place that knows which captain a Give means,
+// and this project has paid for the second expression of a rule before. Every
+// other action is a pure call into the world.
+void executeStationAction(SpaceWorld& world, const sol::ui::StationAction& action, int& selectedCaptain);
 
 } // namespace game

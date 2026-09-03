@@ -44,6 +44,8 @@ void fillStationOutfitting(const SpaceWorld& world,
                            std::vector<ui::OutfitRow>& crewAboardRows,
                            std::vector<ui::OutfitRow>& shipRows,
                            std::vector<ui::FleetRow>& fleetRows,
+                           std::vector<ui::CaptainRow>& captainRows,
+                           std::vector<ui::CaptainRow>& captainHireRows,
                            std::vector<ui::FactionRow>& factionRows)
 {
     text.clear();
@@ -56,6 +58,8 @@ void fillStationOutfitting(const SpaceWorld& world,
     crewAboardRows.clear();
     shipRows.clear();
     fleetRows.clear();
+    captainRows.clear();
+    captainHireRows.clear();
     factionRows.clear();
 
     const OwnedShip& active = world.activeShip();
@@ -270,11 +274,47 @@ void fillStationOutfitting(const SpaceWorld& world,
     for (std::size_t i = 0; i < world.fleet().size(); ++i) {
         const OwnedShip& ship = world.fleet()[i];
         const assets::ShipDef* def = defs.findShip(ship.defId.c_str());
+        const game::Captain* holder = world.captainOf(i);
         fleetRows.push_back({.name = def != nullptr ? def->name.c_str() : ship.defId.c_str(),
                              .active = i == world.activeShipIndex(),
                              .storedHere = ship.storedSystem == world.currentSystemIndex() &&
                                            ship.storedStation == world.dockedStationIndex(),
-                             .value = static_cast<float>(world.shipValue(ship))});
+                             .value = static_cast<float>(world.shipValue(ship)),
+                             .captain = holder != nullptr ? holder->name.c_str() : ""});
+    }
+
+    // Captains (Phase 39 stage A). The employed list first, then whoever is
+    // standing in this dock's crew hall - which is empty at a dock with no
+    // `crew` screen, and the tab says so rather than showing an empty box.
+    //
+    // ⚑⚑ THE DETAIL LINE NAMES THE HULL AND THE SYSTEM, not just "assigned".
+    // A captain the player cannot find is the failure this stage can produce,
+    // and the fleet list is on a different tab.
+    for (std::size_t i = 0; i < world.captains().size(); ++i) {
+        const game::Captain& captain = world.captains()[i];
+        std::string detail = captain.trade + ", " + formatNumber(captain.cut * 100.0f) + "% of takings";
+        if (captain.ship < world.fleet().size()) {
+            const OwnedShip& held = world.fleet()[captain.ship];
+            const assets::ShipDef* def = defs.findShip(held.defId.c_str());
+            detail += " - flying ";
+            detail += def != nullptr ? def->name : held.defId;
+            if (held.storedSystem < world.galaxy().systems.size()) {
+                detail += " at " + world.galaxy().systems[held.storedSystem].name;
+            }
+        } else {
+            detail += " - no ship";
+        }
+        captainRows.push_back({.name = captain.name.c_str(),
+                               .detail = store(text, detail),
+                               .assigned = captain.ship < world.fleet().size(),
+                               .selected = static_cast<int>(i) == panel.selectedCaptain});
+    }
+    std::vector<game::CaptainCandidate> hall;
+    world.captainCandidates(hall);
+    for (const game::CaptainCandidate& who : hall) {
+        captainHireRows.push_back(
+            {.name = store(text, who.name),
+             .detail = store(text, who.trade + ", " + formatNumber(who.cut * 100.0f) + "% of takings")});
     }
 
     // Factions tab (Phase 8b): standings plus each faction's wars.
@@ -371,6 +411,8 @@ void fillStationOutfitting(const SpaceWorld& world,
     panel.crewAboard = crewAboardRows;
     panel.shipCatalog = shipRows;
     panel.fleet = fleetRows;
+    panel.captains = captainRows;
+    panel.captainHires = captainHireRows;
     panel.factions = factionRows;
 }
 
@@ -692,7 +734,7 @@ std::string formatAge(double seconds)
     return buffer;
 }
 
-void executeStationAction(SpaceWorld& world, const ui::StationAction& action)
+void executeStationAction(SpaceWorld& world, const ui::StationAction& action, int& selectedCaptain)
 {
     using Kind = ui::StationAction::Kind;
     switch (action.kind) {
@@ -745,6 +787,31 @@ void executeStationAction(SpaceWorld& world, const ui::StationAction& action)
         break;
     case Kind::BuyMarketIntel:
         (void)world.buyMarketIntel();
+        break;
+    case Kind::SelectCaptain:
+        // Clicking the selected row again clears it, which is `mountList`'s
+        // rule and the only way to un-aim the Give buttons.
+        selectedCaptain = selectedCaptain == action.index ? -1 : action.index;
+        break;
+    case Kind::HireCaptain:
+        (void)world.hireCaptain(static_cast<std::size_t>(action.index));
+        break;
+    case Kind::DismissCaptain:
+        (void)world.dismissCaptain(static_cast<std::size_t>(action.index));
+        // ⚑ The list just shrank, so any selection into it names somebody
+        // else. Cleared rather than fixed up: a Give aimed at whoever slid into
+        // the slot is a ship handed to the wrong person.
+        selectedCaptain = -1;
+        break;
+    case Kind::AssignCaptain:
+        if (selectedCaptain >= 0) {
+            (void)world.assignCaptain(static_cast<std::size_t>(selectedCaptain),
+                                      static_cast<std::size_t>(action.index));
+            selectedCaptain = -1; // they have a ship now: nothing left to aim
+        }
+        break;
+    case Kind::RecallCaptain:
+        (void)world.recallCaptain(static_cast<std::size_t>(action.index));
         break;
     }
 }

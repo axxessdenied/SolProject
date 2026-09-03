@@ -529,6 +529,8 @@ int main(int argc, char** argv)
     std::vector<sol::ui::OutfitRow> crewAboardRows;
     std::vector<sol::ui::OutfitRow> shipRows;
     std::vector<sol::ui::FleetRow> fleetRows;
+    std::vector<sol::ui::CaptainRow> captainRows;
+    std::vector<sol::ui::CaptainRow> captainHireRows;
     std::vector<sol::ui::FactionRow> factionRows;
     std::vector<sol::ui::MissionRow> missionOfferRows;
     std::vector<sol::ui::MissionRow> missionJournalRows;
@@ -1676,6 +1678,9 @@ int main(int argc, char** argv)
             // An id that no longer names a mount on this hull resolves to
             // nothing there and the catalogs fall back to auto-placement.
             stationPanel.selectedMount = stationScreen.selectedMount.c_str();
+            // A stale index simply stops matching and the Give buttons grey
+            // themselves; see `StationScreenState::selectedCaptain`.
+            stationPanel.selectedCaptain = stationScreen.selectedCaptain;
             game::fillStationOutfitting(world,
                                         content.defs(),
                                         stationText,
@@ -1689,6 +1694,8 @@ int main(int argc, char** argv)
                                         crewAboardRows,
                                         shipRows,
                                         fleetRows,
+                                        captainRows,
+                                        captainHireRows,
                                         factionRows);
             game::fillStationMissions(world,
                                       stationText,
@@ -2318,7 +2325,7 @@ int main(int argc, char** argv)
             }
         }
         if (showStation) {
-            game::executeStationAction(world, stationPanel.action);
+            game::executeStationAction(world, stationPanel.action, stationScreen.selectedCaptain);
         }
 
         bool needRecreate = window.consumeResize();

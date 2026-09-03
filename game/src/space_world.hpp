@@ -1372,6 +1372,70 @@ struct OwnedShip
     [[nodiscard]] const ShipFitting* fittingAt(std::string_view mountId) const;
 };
 
+// ---------------------------------------------------------------------------
+// Captains (Phase 39 stage A).
+//
+// ⚑⚑⚑⚑ A CAPTAIN IS A PERSON, AND THAT IS THE WHOLE OF WHY THIS IS A NEW TYPE
+// RATHER THAN A `CrewDef` WITH A FLAG. `OwnedShip::crewIds` is a list of catalog
+// id STRINGS - so two hired Engineers are one string twice, unnameable and
+// unaddressable - and `decisions/006` states the model in its own words: "no
+// personalities, no management, no leveling, no wages". There is no object in
+// this game a standing order could be given to, which is the finding the phase
+// spec opens with. `decisions/020` is the conscious replacement 006's own last
+// consequence asks for, and passive-bonus crew stand beside this untouched.
+//
+// ⚑⚑⚑ AND THE SPEC WAS WRONG ABOUT ONE THING IN THE CHEAP DIRECTION: this is
+// NOT "the first instance of a person the game has ever had". Phase 35 built
+// one - `CastSeat` names somebody in all 62 rooms and `CastMemory{who, visits,
+// regard}` is a SAVED relationship ledger keyed by a person-or-chair
+// distinction that has its own comment. So a captain reuses that identity SPACE
+// (`castKeyForCharacter`'s 63-bit hash) rather than opening a second one, and
+// the parallel-table defect Phase 34's risk register names is refused here
+// rather than discovered later.
+//
+// ⚑⚑ THE NAME IS COPIED IN, NOT LOOKED UP, and it dissolves the spec's own
+// "a person is a new kind of save-format promise" risk. `CastSeat` already
+// copies for this reason - "a regular's name exists in no def at all" - and a
+// captain's name exists in no def either: it is drawn from the same syllable
+// tables the cast uses. There IS no def to go missing on load.
+struct Captain
+{
+    std::string name;  // copied in; lives in no def
+    std::string trade; // what they did before you hired them
+    // Identity, in the cast's key space. Stable across a save, and what the
+    // crew hall filters its candidates by - so a hired captain stops being on
+    // offer without a second list being kept anywhere.
+    std::uint64_t who = 0;
+    // Fleet index of the hull they fly, or `kNoIndex` for a captain with no
+    // ship yet.
+    //
+    // ⚑⚑⚑ ONE DIRECTION ONLY, AND THE SPEC SAID TWO. Its stage A line reads
+    // "`OwnedShip` learns it is assigned"; a field on both sides is two truths
+    // that can disagree, and the fleet is small enough that `captainOf()` is a
+    // search. What `sellShip` has to do instead is shift these indices the way
+    // it already shifts `m_activeShip` - which is a real hazard and has a
+    // guard.
+    std::uint32_t ship = 0xffff'ffffu;
+    // What they take of what the ship earns, as a fraction (ruling 3 of the
+    // phase spec). Drawn per candidate, so shopping around is worth doing.
+    float cut = 0.0f;
+};
+
+// Somebody looking for a berth in the docked station's crew hall.
+//
+// ⚑⚑ DERIVED FROM THE SEED AND NEVER SAVED, exactly as the cast's seating is:
+// who is standing in a hall costs nothing on disk. What IS saved is who you
+// hired, and the hall filters against that - so a captain you DISMISS is on
+// offer again, which is honest (they went back to looking for work) and costs
+// no storage at all.
+struct CaptainCandidate
+{
+    std::string name;
+    std::string trade;
+    std::uint64_t who = 0;
+    float cut = 0.0f;
+};
+
 // What a per-def model OVERRIDE resolves to (Phase 19). An empty `name` means
 // "whatever fills `role`", which is what every def the base game ships relies
 // on; a name that no [[model]] defines warns and falls back to the role too,
@@ -2018,6 +2082,41 @@ public:
     bool switchShip(std::size_t fleetIndex, std::string* outError = nullptr);
     bool hireCrew(const char* crewId, std::string* outError = nullptr);
     bool fireCrew(const char* crewId, std::string* outError = nullptr);
+
+    // --- Captains (Phase 39 stage A) ---------------------------------------
+    //
+    // ⚑⚑⚑ EVERY ONE OF THESE REQUIRES BEING DOCKED, and the assignment pair
+    // requires being docked AT THE STATION THE HULL IS PARKED AT - the same
+    // rule `sellShip` and `switchShip` already enforce, and for a better
+    // reason than symmetry: a captain has to physically take the ship, so both
+    // of you have to be standing there.
+    //
+    // ⚑ HIRING IS FREE, AND THAT IS RULING 3 HELD RATHER THAN SOFTENED. The
+    // ruling took "a cut of what the ship earns" OVER a one-time fee; charging
+    // both would be re-litigating it. The scarce thing is hulls, not people.
+    static constexpr std::uint32_t kCaptainsPerHall = 3;
+    static constexpr float kCaptainCutMin = 0.08f;
+    static constexpr float kCaptainCutMax = 0.20f;
+
+    [[nodiscard]] const std::vector<Captain>& captains() const { return m_captains; }
+
+    // Who flies this hull, or nullptr for one nobody has been given.
+    [[nodiscard]] const Captain* captainOf(std::size_t fleetIndex) const;
+
+    // Everybody looking for a berth in the docked station's crew hall. Empty
+    // while flying and at a station with no `crew` screen. Rebuilt on every
+    // call from the seed, so an index into it is good for exactly as long as
+    // the caller holds it - which is why the mutators below take one.
+    void captainCandidates(std::vector<CaptainCandidate>& out) const;
+
+    bool hireCaptain(std::size_t candidateIndex, std::string* outError = nullptr);
+    // ⚑⚑ REFUSES WHILE THEY HOLD A SHIP, rather than quietly unassigning.
+    // In stage A that is tidiness; from stage B on, the hull is somewhere else
+    // flying a route, and a dismissal that silently abandoned it is how a
+    // freighter goes missing. One action does one thing.
+    bool dismissCaptain(std::size_t captainIndex, std::string* outError = nullptr);
+    bool assignCaptain(std::size_t captainIndex, std::size_t fleetIndex, std::string* outError = nullptr);
+    bool recallCaptain(std::size_t captainIndex, std::string* outError = nullptr);
 
     // --- Factions & reputation (Phase 8b) ---
     static constexpr float kClanInitialStanding = -20.0f;   // dockable, wary
@@ -4579,6 +4678,9 @@ private:
     // the database applyDefs last saw (owned by GameContent, outlives us).
     std::vector<OwnedShip> m_fleet;
     std::size_t m_activeShip = 0;
+    // Captains in the player's employ (Phase 39 stage A). Saved; the crew
+    // hall's candidates are not, and are filtered against this.
+    std::vector<Captain> m_captains;
     const sol::assets::DefDatabase* m_defs = nullptr;
     bool m_hardcore = false;
     bool m_hardcoreDeathPending = false;
