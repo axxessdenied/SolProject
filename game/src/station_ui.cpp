@@ -51,6 +51,13 @@ namespace {
                    ? spec.stations[row.stationIndex].name + " (" + spec.name + ")"
                    : spec.name;
     };
+    // ⚑ A MINING ORDER HAS ONE END AND SAYS SO, rather than printing
+    // "<-> nowhere" off an unset `marketB`. Same function because it answers
+    // the same question - where is this order pointed - and the heading is the
+    // one place either answer is allowed to be as long as it needs to be.
+    if (order.kind == game::OrderKind::Mine) {
+        return "working the rock, selling at " + name(order.marketA);
+    }
     return name(order.marketA) + " <-> " + name(order.marketB);
 }
 
@@ -382,6 +389,28 @@ void fillStationOutfitting(const SpaceWorld& world,
             status = "no ship - give them one from the list above";
         } else if (!ordered) {
             status = parkedHere ? "parked here, no orders" : "parked elsewhere, no orders";
+        } else if (captain.order.kind == game::OrderKind::Mine) {
+            // ⚑ THE ROCKS, WHICH IS THE COUNT AND NOT THE STATE - stage A's
+            // rule, on the screen this time. "At the rock" reads identically
+            // whether the system is being ticked or was rebuilt around a
+            // sleeping captain; a number that has gone up since the player
+            // last looked cannot.
+            status = captain.mine.phase == game::MinePhase::Selling ? "taking a load in" : "at the rock";
+            // ⚑ THE GOOD'S NAME AND NOT ITS DEF ID, WHICH THE FLIGHT CAUGHT AND
+            // NO TEST WOULD HAVE. The console prints `sol.ore_ferrous` because a
+            // console is talking about defs; the Trade tab three tabs away says
+            // "Ferrous Ore", and a screen that says both about the same cargo is
+            // a screen that looks half-finished. `defs` is already in hand here.
+            const std::string* oreId = captain.mine.commodity < world.commodityIds().size()
+                                           ? &world.commodityIds()[captain.mine.commodity]
+                                           : nullptr;
+            const assets::CommodityDef* ore = oreId != nullptr ? defs.findCommodity(oreId->c_str()) : nullptr;
+            status += ", " + formatNumber(captain.mine.units) + " " +
+                      (ore != nullptr ? ore->name : std::string("ore")) + " aboard, " +
+                      std::to_string(captain.mine.rockStep) + " rock(s)";
+            if (captain.order.stopping) {
+                status += ", standing down";
+            }
         } else {
             const sol::sim::TraderRoute route = world.captainRoute(index);
             const char* word = route.leg == sol::sim::TraderLeg::Depart   ? "outbound"
@@ -405,21 +434,37 @@ void fillStationOutfitting(const SpaceWorld& world,
         // came back, not what was projected. Shown from the first haul, because
         // a captain who has run one leg and made nothing is exactly the case
         // this is for.
-        if (hasShip && (captain.haul.earned != 0.0 || captain.haul.paid > 0.0)) {
+        if (hasShip && (captain.ledger.earned != 0.0 || captain.ledger.paid > 0.0)) {
             char money[96] = {};
             std::snprintf(money,
                           sizeof(money),
                           " - %.0f cr to you, %.0f to them",
-                          captain.haul.earned,
-                          captain.haul.paid);
+                          captain.ledger.earned,
+                          captain.ledger.paid);
             status += money;
-            if (captain.haul.losses > 0) {
-                status += ", " + std::to_string(captain.haul.losses) + " lost";
+            if (captain.ledger.losses > 0) {
+                status += ", " + std::to_string(captain.ledger.losses) + " lost";
             }
         }
         panel.captainStatus = store(text, status);
         panel.captainCanStandDown = ordered;
         panel.captainCanRecall = parkedHere && !ordered;
+
+        // ⚑⚑ THE SAME THREE PREDICATES `orderMine` REFUSES ON, ASKED HERE SO
+        // THE SECTION CAN SAY WHICH ONE. This is the section's own bargain
+        // restated for a second order kind - and the note matters more here
+        // than it did for a haul, because "no rock in this system" and "no
+        // beam on that hull" are both things a player fixes by flying or by
+        // buying, and neither is guessable from a greyed button.
+        const bool rockHere = world.mining().fieldCount(world.currentSystemIndex()) > 0;
+        const float beam = hasShip ? world.shipMiningPower(world.fleet()[captain.ship]) : 0.0f;
+        panel.captainCanMine = hasShip && parkedHere && !ordered && rockHere && beam > 0.0f;
+        panel.captainMineNote = !hasShip       ? "give them a hull first"
+                                : !rockHere    ? "no asteroid field in this system"
+                                : beam <= 0.0f ? "that hull carries no mining beam"
+                                : !parkedHere  ? "their ship is not on this dock"
+                                : ordered ? "cancel their orders first"
+                                          : store(text, "cuts " + formatNumber(beam) + " units a second");
 
         // ⚑ The destination list is offered only when an order would actually
         // be taken. `orderHaul` refuses a hull that is not on this dock and one
@@ -950,6 +995,13 @@ void executeStationAction(SpaceWorld& world, const ui::StationAction& action, in
                 (void)world.orderHaul(static_cast<std::size_t>(selectedCaptain),
                                       places[static_cast<std::size_t>(action.index)].market);
             }
+        }
+        break;
+    case Kind::OrderMine:
+        // No row to resolve: the order names this system and this dock, so the
+        // selection is the whole of it.
+        if (selectedCaptain >= 0) {
+            (void)world.orderMine(static_cast<std::size_t>(selectedCaptain));
         }
         break;
     case Kind::CancelOrder:

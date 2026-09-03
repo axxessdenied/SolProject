@@ -224,7 +224,7 @@ constexpr std::uint32_t kSaveMagic = 0x37'4c'4f'53u; // "SOL7"
 // refuses to let change under a file - and the haul beside it is the leg
 // clock, because a save taken mid-run has to load into the same haul rather
 // than teleporting a laden hull to one end of it.
-constexpr std::uint32_t kSaveVersion = 40;
+constexpr std::uint32_t kSaveVersion = 41;
 
 // ---------------------------------------------------------------------------
 // ⚑⚑⚑⚑ WHAT THE AUTHORED HALF OF THIS GALAXY WAS MADE OF, IN EIGHT BYTES
@@ -3329,14 +3329,29 @@ void SpaceWorld::fillSystemSky(SystemBubble& bubble)
     spawnAmbientPilots(bubble, spec);
 }
 
-bool SpaceWorld::instantiateSystem(std::uint32_t system)
+bool SpaceWorld::instantiateSystem(std::uint32_t system, bool overCap)
 {
     // ⚑⚑ THE CAP IS CHECKED HERE TOO, AND IT IS THE POLICY CAP NOW (Phase 38
     // stage C). It was `kMaxBubbles`, the save-file sanity limit, because
     // stage B had no policy to check against. This door is the one the tests
     // and the console open a system through, so a cap it did not honour would
     // be a cap the O(n^2) pass could still be surprised by.
-    if (system >= m_galaxy.systems.size() || m_bubbles.size() >= kMaxInstantiatedSystems) {
+    //
+    // ⚑⚑⚑ `overCap` IS THE ONE EXEMPTION AND ONLY THE CAPTAIN TICK PASSES IT
+    // (stage C). The spec named what happens without it: past six systems a
+    // captain's ship "is not destroyed and not refused - it is never simulated,
+    // silently", because this returns `false` and nothing downstream asks why.
+    // It is the same soft cap `enforceBubbleCap` keeps, said at the other door,
+    // and it is a parameter rather than a second function so that there is one
+    // place where a bubble comes into existence. `kMaxBubbles` still binds
+    // absolutely: that one is the save format's limit and not a policy.
+    if (system >= m_galaxy.systems.size()) {
+        return false;
+    }
+    if (!overCap && m_bubbles.size() >= kMaxInstantiatedSystems) {
+        return false;
+    }
+    if (m_bubbles.size() >= kMaxBubbles) {
         return false;
     }
     // Already open: hand it back as it stands. Building the sky a second time
@@ -5005,6 +5020,17 @@ void SpaceWorld::syncCaptainPuppets(SystemBubble& bubble)
     for (std::size_t i = 0; i < puppets.size(); ++i) {
         CaptainPuppet& puppet = puppets.values()[i];
         const ecs::Entity entity = registry.entityFromIndex(puppets.entityIndices()[i]);
+        // ⚑⚑⚑ A STATIONARY CAPTAIN'S HULL IS NOT THIS FUNCTION'S TO JUDGE, AND
+        // WITHOUT THIS LINE IT WOULD DELETE ONE EVERY TICK (stage C). The test
+        // below is "is this body still on the leg the record says it is flying",
+        // and a mining captain has no leg - so `captainLegSegment` answers false
+        // and the hull is doomed, one tick after `tickMiningCaptains` spawned
+        // it, forever. One component, two owners, and the ORDER is what divides
+        // them.
+        if (puppet.captainIndex < m_captains.size() &&
+            stationary(m_captains[puppet.captainIndex].order.kind)) {
+            continue;
+        }
         TraderLegPlacement leg;
         if (puppet.captainIndex >= m_captains.size() ||
             !captainLegSegment(puppet.captainIndex, bubble.system, leg) ||
@@ -5041,6 +5067,9 @@ void SpaceWorld::syncCaptainPuppets(SystemBubble& bubble)
     for (std::uint32_t c = 0; c < static_cast<std::uint32_t>(m_captains.size()); ++c) {
         if (m_captainPresent[c] != 0) {
             continue;
+        }
+        if (stationary(m_captains[c].order.kind)) {
+            continue; // `tickMiningCaptains` gives that one its body
         }
         TraderLegPlacement leg;
         if (!captainLegSegment(c, bubble.system, leg)) {
@@ -5093,6 +5122,402 @@ void SpaceWorld::syncCaptainPuppets(SystemBubble& bubble)
                      captain.name.c_str(),
                      def.name.c_str(),
                      m_galaxy.systems[bubble.system].name.c_str());
+    }
+}
+
+std::uint32_t
+SpaceWorld::chooseCaptainOre(const ecs::Registry& registry, std::uint32_t market, float load) const
+{
+    if (market >= m_economy.markets().size() || load <= 0.0f) {
+        return kNoIndex;
+    }
+    const ecs::Pool<MineableRock>& rocks = registry.storage<MineableRock>();
+    std::uint32_t best = kNoIndex;
+    float bestValue = 0.0f;
+    for (std::size_t i = 0; i < rocks.size(); ++i) {
+        const std::uint32_t commodity = rocks.values()[i].commodity;
+        if (commodity == best) {
+            continue; // the run of one field's rocks; the quote does not change
+        }
+        const float value = m_economy.quoteSell(market, commodity, load);
+        if (best == kNoIndex || value > bestValue) {
+            best = commodity;
+            bestValue = value;
+        }
+    }
+    return best;
+}
+
+bool SpaceWorld::chooseCaptainRock(const ecs::Registry& registry,
+                                   const Captain& captain,
+                                   CaptainPuppet& puppet,
+                                   const core::DVec3& from,
+                                   bool sameField) const
+{
+    // ⚑⚑ `MinerPuppet`'s CHOICE, MADE FOR A DIFFERENT MINER - AND IT IS THE
+    // SAME FUNCTION RATHER THAN THE SAME IDEA WRITTEN TWICE. `chooseMinerRock`
+    // takes a `MinerPuppet&` because that is the only miner this game had; the
+    // three fields it actually reads and writes are a commodity, a field and a
+    // rock, and a captain's body has all three. So this is a shim that borrows
+    // the record rather than a second rock-picking rule to keep in step - which
+    // matters more than it looks, because the rule it would have to keep in
+    // step with is "the straight line to the next rock must miss every other
+    // rock", and that one was written after watching a miner die.
+    MinerPuppet borrowed{.market = captain.order.marketA,
+                         .commodity = captain.mine.commodity,
+                         .field = captain.mine.field,
+                         .rock = puppet.rock,
+                         .rockSeconds = 0.0f,
+                         .rockStep = captain.mine.rockStep};
+    if (!chooseMinerRock(registry, borrowed, from, sameField)) {
+        return false;
+    }
+    puppet.rock = borrowed.rock;
+    return true;
+}
+
+void SpaceWorld::settleCaptainMineSale(Captain& captain)
+{
+    CaptainMine& mine = captain.mine;
+    const std::uint32_t market = captain.order.marketA;
+    if (mine.units <= 0.0f || market >= m_economy.markets().size()) {
+        return;
+    }
+    const float aboard = mine.units;
+    const sim::TradeResult sold = m_economy.sell(market, mine.commodity, aboard);
+    if (sold.units <= 0.0f) {
+        // A full warehouse. The load stays aboard and the captain goes back to
+        // the rock with it - `Economy`'s own answer at a haul's far end, for its
+        // own reason: tipping a hold into space is a galaxy-wide leak of goods.
+        // The hold is already at its stop fraction, so nothing more is cut and
+        // the next run in is the one that clears.
+        return;
+    }
+    // ⚑⚑⚑⚑ RULING 6 NEEDED NO SPECIAL CASE HERE, AND THAT IS THE STAGE'S
+    // CHEAPEST FINDING. "The cut is of the PROFIT, never of the sale" was
+    // written against a haul, where the hold's cost has to come off first or a
+    // thin margin pays the captain more than the run made. Ore out of the
+    // ground has no cost: nobody bought it, so the basis is zero and the profit
+    // IS the gross. The same sentence, evaluated against a different outlay,
+    // gives the answer a mining captain should get - a straight share of what
+    // the ore fetched - without a second rule anywhere.
+    const double gross = static_cast<double>(sold.credits);
+    const double cut = gross > 0.0 ? gross * static_cast<double>(captain.cut) : 0.0;
+    m_playerCredits += gross - cut;
+    captain.ledger.earned += gross - cut;
+    captain.ledger.paid += cut;
+    mine.units = std::max(0.0f, aboard - sold.units);
+    const sim::StationMarket& row = m_economy.markets()[market];
+    SOL_LOG_INFO("%s sold %.0f %s at %s for %.0f cr (%.0f to them)",
+                 captain.name.c_str(),
+                 static_cast<double>(sold.units),
+                 mine.commodity < m_commodityIds.size() ? m_commodityIds[mine.commodity].c_str() : "ore",
+                 m_galaxy.systems[row.systemIndex].stations[row.stationIndex].name.c_str(),
+                 gross,
+                 cut);
+}
+
+void SpaceWorld::tickMiningCaptains(SystemBubble& bubble, double dt)
+{
+    if (m_defs == nullptr || m_factionTable.empty() || m_economy.markets().empty() || m_captains.empty()) {
+        return;
+    }
+    ecs::Registry& registry = bubble.registry;
+
+    // Bodies first, on `syncCaptainPuppets`' opening and for its reason: a
+    // captain whose order has been taken away stops having a hull here.
+    std::vector<ecs::Entity> doomed;
+    ecs::Pool<CaptainPuppet>& puppets = registry.storage<CaptainPuppet>();
+    for (std::size_t i = 0; i < puppets.size(); ++i) {
+        CaptainPuppet& puppet = puppets.values()[i];
+        const ecs::Entity entity = registry.entityFromIndex(puppets.entityIndices()[i]);
+        if (puppet.captainIndex >= m_captains.size()) {
+            continue; // `syncCaptainPuppets` owns that one and dooms it there
+        }
+        Captain& captain = m_captains[puppet.captainIndex];
+        if (!stationary(captain.order.kind)) {
+            continue;
+        }
+        if (captainSystem(puppet.captainIndex) != bubble.system || captain.ship >= m_fleet.size() ||
+            captain.order.marketA >= m_economy.markets().size()) {
+            doomed.push_back(entity);
+            continue;
+        }
+        m_captainPresent[puppet.captainIndex] = 1;
+        ShipPilot* pilot = registry.tryGet<ShipPilot>(entity);
+        Transform* transform = registry.tryGet<Transform>(entity);
+        if (pilot == nullptr || transform == nullptr) {
+            continue;
+        }
+        // Being shot at stops the work and nothing else does. `syncMinerPuppets`'
+        // rule, word for word: Attack and Flee are Lua's, Idle and Patrol go
+        // back on the job, and the threat has to have gone cold first or the
+        // tick after a fight ends sends the hull straight back to the rock it
+        // was being shot off.
+        if (pilot->threatTimer > 0.0f) {
+            m_captainDetained[puppet.captainIndex] = 1;
+            continue;
+        }
+        if (pilot->state == PilotState::Idle || pilot->state == PilotState::Patrol) {
+            pilot->state = PilotState::Travel;
+        }
+        if (pilot->state != PilotState::Travel) {
+            continue;
+        }
+
+        CaptainMine& mine = captain.mine;
+        const sim::StationMarket& row = m_economy.markets()[captain.order.marketA];
+        const core::DVec3 dock = m_galaxy.systems[row.systemIndex].stations[row.stationIndex].position;
+        const float capacity = resolvedShipDef(m_fleet[captain.ship]).cargoCapacity;
+        const float stopAt = capacity * kCaptainHoldFullFraction;
+
+        if (mine.phase == MinePhase::Selling) {
+            puppet.destination = dock;
+            pilot->waypoint = dock;
+            (void)cruiseCaptainToward(registry, entity, dock, kCaptainDeliverRange * 0.5, dt);
+            if (length(transform->position - dock) > kCaptainDeliverRange) {
+                continue;
+            }
+            settleCaptainMineSale(captain);
+            if (captain.order.stopping) {
+                // Stood down at the counter, and the hull is parked where it
+                // landed - `captainArrive`'s line, which is what makes "fly to
+                // one of them and find them where the screen said they were"
+                // answerable through the field every other screen already reads.
+                OwnedShip& hull = m_fleet[captain.ship];
+                hull.storedSystem = row.systemIndex;
+                hull.storedStation = row.stationIndex;
+                captain.order = {};
+                captain.mine = {};
+                SOL_LOG_INFO("%s stands down at %s",
+                             captain.name.c_str(),
+                             m_galaxy.systems[row.systemIndex].stations[row.stationIndex].name.c_str());
+                doomed.push_back(entity);
+                continue;
+            }
+            // ⚑⚑⚑ A HOLD THAT DID NOT CLEAR KEEPS THE HULL AT THE COUNTER, AND
+            // THE ALTERNATIVE IS A SHUTTLE THAT NEVER STOPS. `settleCaptainSale`'s
+            // own rule is that a market with no room leaves the load aboard, so
+            // this can return with the hold exactly as full as it arrived - and
+            // sending it back out then means arriving at a rock with no room,
+            // turning straight round, and flying the leg again forever. It waits
+            // instead, which is what a hauler with nowhere to put a load actually
+            // does, and the readout says "taking a load in" the whole time.
+            if (mine.units >= stopAt) {
+                continue;
+            }
+            // Back out to the rock. The hold may still hold something - a market
+            // that could take only part of the load - and that is fine: the stop
+            // fraction is a ceiling, so a part-full hull simply cuts less before
+            // its next run in.
+            mine.phase = MinePhase::Cutting;
+            mine.rockSeconds = 0.0; // pick a rock on the next tick
+            continue;
+        }
+
+        // Cutting. The rock is settled first, because everything below is about
+        // one, and then the ore comes out of the ground at the rate the fit cuts
+        // at.
+        // ⚑ THE ROCK CLOCK ONLY RUNS AT THE ROCK. A minute a rock is a minute
+        // of WORK, and counting it down during a crossing would have a captain
+        // arrive at a rock it has already decided to leave - which reads, from
+        // outside, as a hull that flies between rocks and never cuts.
+        if (length(transform->position - puppet.destination) <= kCaptainCruiseInside) {
+            mine.rockSeconds -= dt;
+        }
+        const MineableRock* rock =
+            puppet.rock != kNoIndex ? registry.storage<MineableRock>().tryGet(puppet.rock) : nullptr;
+        if (rock == nullptr || mine.rockSeconds <= 0.0) {
+            // ⚑⚑⚑ THE ORE IS DECIDED WHEN THE HOLD IS EMPTY AND NOT BEFORE,
+            // AND THE DEFAULT WAS A BUG WAITING TO BE ONE. `chooseMinerRock`
+            // filters on `MinerPuppet::commodity` because an outpost sells one
+            // thing and works the rock holding it - so a captain arriving with
+            // an unset commodity would have hunted for commodity ZERO, found
+            // none of it, and stood in an asteroid field forever reporting
+            // that the field was worked out. Nothing about that reads as a
+            // wrong DEFAULT; it reads as mining being broken.
+            if (mine.units <= 0.0f) {
+                const std::uint32_t ore = chooseCaptainOre(registry, captain.order.marketA, stopAt);
+                if (ore == kNoIndex) {
+                    mine.phase = MinePhase::Selling;
+                    continue;
+                }
+                mine.commodity = ore;
+            }
+            const bool sameField = rock != nullptr;
+            if (!chooseCaptainRock(registry, captain, puppet, transform->position, sameField)) {
+                // ⚑⚑ THE FIELD IS WORKED OUT UNDER THEM, AND THE ANSWER IS TO GO
+                // AND SELL RATHER THAN TO STOP. A captain sitting at a dead rock
+                // with a half hold is the one failure of this order a player
+                // could not tell from a broken one, and there is nothing better
+                // for them to do: the order names this system, and the ore grows
+                // back (`rockRegenPerSecond`), so the run in IS the wait.
+                mine.phase = MinePhase::Selling;
+                continue;
+            }
+            rock = registry.storage<MineableRock>().tryGet(puppet.rock);
+            if (rock == nullptr) {
+                mine.phase = MinePhase::Selling;
+                continue;
+            }
+            mine.field = rock->field;
+            mine.rockSeconds = kMinerRockSeconds;
+            ++mine.rockStep;
+        }
+        const Transform* rockTransform = registry.storage<Transform>().tryGet(puppet.rock);
+        const RenderShape* rockShape = registry.storage<RenderShape>().tryGet(puppet.rock);
+        if (rockTransform == nullptr || rockShape == nullptr) {
+            continue;
+        }
+
+        // On the dock's side of the rock, the rule `minerWorkPoint` follows: a
+        // ship coming out from the station meets the miner rather than the rock
+        // it is hiding behind.
+        const core::DVec3 hold = sim::minerHoldPoint(rockTransform->position,
+                                                     static_cast<double>(rockShape->scale.x),
+                                                     dock - rockTransform->position,
+                                                     kMinerRockClearance);
+        puppet.destination = hold;
+        pilot->waypoint = hold;
+        (void)cruiseCaptainToward(registry, entity, hold, kTraderArrivalRange, dt);
+        // ⚑⚑⚑ ORE ONLY COMES OUT WHILE THE HULL IS ACTUALLY AT THE ROCK, AND
+        // THAT IS WHAT MAKES THE FLYING COST SOMETHING. Without it a captain
+        // earns the same whether the field is beside the dock or half a
+        // playfield out, every hop between rocks is free, and the body becomes
+        // scenery drawn over an accrual - which is the "it is a spreadsheet"
+        // failure stage B's promotion exists to avoid, arrived at from the
+        // other side.
+        if (length(transform->position - hold) > kMinerRockClearance + kTraderArrivalRange) {
+            continue;
+        }
+        const float room = stopAt - mine.units;
+        if (room <= 0.0f) {
+            mine.phase = MinePhase::Selling;
+            continue;
+        }
+        const float wanted = std::min(room, shipMiningPower(m_fleet[captain.ship]) * static_cast<float>(dt));
+        // ⚑⚑⚑⚑ THROUGH `MiningSim::mineRock`, WHICH IS THE WHOLE OF WHY THIS IS
+        // NOT AN ACCRUAL WITH A SHIP DRAWN NEXT TO IT. The rock a captain cuts
+        // is depleted in the same sparse record the player's own beam writes and
+        // an outpost's draw reads, so a captain working a field takes ore out of
+        // a mining station's supply and out of the player's next visit. One
+        // finite resource, three consumers - this file's rule since Phase 8f,
+        // and it needed nothing new to hold.
+        const float taken =
+            m_mining.mineRock(bubble.system, rock->field, rock->index, rock->totalUnits, wanted);
+        if (taken <= 0.0f) {
+            mine.rockSeconds = 0.0; // cut to nothing; move on next tick
+            continue;
+        }
+        mine.units += taken;
+        if (m_mining.unitsLeft(bubble.system, rock->field, rock->index, rock->totalUnits) <= 0.0f) {
+            registry.destroy(registry.entityFromIndex(puppet.rock)); // it broke up
+            puppet.rock = kNoIndex;
+            mine.rockSeconds = 0.0;
+        }
+        if (mine.units >= stopAt) {
+            mine.phase = MinePhase::Selling;
+        }
+    }
+    for (const ecs::Entity entity : doomed) {
+        despawnShip(bubble, entity.index);
+    }
+
+    // Then the people: a captain posted here with no hull in the sky yet gets
+    // one. Placed at the DOCK rather than out at a rock, because that is where
+    // they were standing when the order was given, and the flight out is the
+    // first thing the order costs.
+    for (std::uint32_t c = 0; c < static_cast<std::uint32_t>(m_captains.size()); ++c) {
+        if (m_captainPresent[c] != 0) {
+            continue;
+        }
+        const Captain& captain = m_captains[c];
+        if (!stationary(captain.order.kind) || captainSystem(c) != bubble.system ||
+            captain.ship >= m_fleet.size() || captain.order.marketA >= m_economy.markets().size()) {
+            continue;
+        }
+        const assets::ShipDef def = resolvedShipDef(m_fleet[captain.ship]);
+        const sim::StationMarket& row = m_economy.markets()[captain.order.marketA];
+        const core::DVec3 dock = m_galaxy.systems[row.systemIndex].stations[row.stationIndex].position;
+        // Allegiance follows the ground it works, which is `syncMinerPuppets`'
+        // rule in the same situation and is WRONG in the same way stage D exists
+        // to fix. Never unaffiliated: Lua reads that as unconditionally
+        // player-hostile, and a hull of yours opening fire on you is the one
+        // thing this must not be.
+        std::uint32_t faction = systemOwnerFaction(row.systemIndex);
+        if (faction >= m_factionTable.size()) {
+            faction = 0;
+        }
+        const ecs::Entity entity =
+            spawnShipAt(bubble, def, *m_defs, dock, m_factionTable[faction].name.c_str());
+        registry.emplace<ShipPilot>(entity,
+                                    ShipPilot{.role = PilotRole::Trader,
+                                              .state = PilotState::Travel,
+                                              .waypoint = dock,
+                                              .factionIndex = faction});
+        registry.emplace<CaptainPuppet>(entity, CaptainPuppet{.captainIndex = c, .destination = dock});
+        m_captainPresent[c] = 1;
+        SOL_LOG_INFO("%s's %s is working the rock in %s",
+                     captain.name.c_str(),
+                     def.name.c_str(),
+                     m_galaxy.systems[bubble.system].name.c_str());
+    }
+}
+
+bool SpaceWorld::cruiseCaptainToward(
+    ecs::Registry& registry, ecs::Entity entity, const core::DVec3& waypoint, double arrival, double dt) const
+{
+    Transform* transform = registry.tryGet<Transform>(entity);
+    FlightBody* body = registry.tryGet<FlightBody>(entity);
+    if (transform == nullptr || body == nullptr) {
+        return false;
+    }
+    const core::DVec3 lane = waypoint - transform->position;
+    const double distance = length(lane);
+    if (distance <= arrival + kCaptainCruiseInside) {
+        return false; // inside a field's own scale; the pilot flies it
+    }
+    const double step = std::min(kCaptainCruiseSpeed * dt, distance - arrival);
+    const core::DVec3 point = transform->position + lane * (step / distance);
+    transform->position = point;
+    // Both ends of the tick, or the collision sweep reads the pace as a
+    // hypersonic charge through everything between the two points -
+    // `keepTraderOnSchedule`'s own hazard, and it is the same one here.
+    transform->previousPosition = point;
+    transform->orientation = lookAlong(lane);
+    transform->previousOrientation = transform->orientation;
+    // Handed over already moving, so the release is a continuation rather than
+    // a freighter stalling at the edge of the window.
+    const ShipControl* control = registry.tryGet<ShipControl>(entity);
+    const double envelope = control != nullptr ? static_cast<double>(control->tuning.maxSpeed) : 200.0;
+    body->velocity = lane * (envelope / distance);
+    return true;
+}
+
+void SpaceWorld::openStationaryCaptainBubbles()
+{
+    // ⚑⚑⚑ THE ORDER OPENS THE SYSTEM, AND IT DOES IT OVER THE CAP (the user's
+    // ruling 11). The spec named exactly what happens without this line: past
+    // six systems `instantiateSystem` returns false and a captain's ship "is
+    // not destroyed and not refused - it is never simulated, silently". A hull
+    // the player paid for, flown by somebody they hired, is not a thing to drop
+    // on the floor because a cooling fight two systems away got there first.
+    for (std::size_t i = 0; i < m_captains.size(); ++i) {
+        if (!stationary(m_captains[i].order.kind)) {
+            continue;
+        }
+        const std::uint32_t system = captainSystem(i);
+        if (system == kNoIndex || systemIsInstantiated(system)) {
+            continue;
+        }
+        if (!instantiateSystem(system, true)) {
+            // Only `kMaxBubbles` can refuse now, and that one is the save
+            // format's ceiling rather than a policy - reaching it means
+            // something else has gone very wrong, so it is said rather than
+            // skipped.
+            SOL_LOG_WARN("captain '%s' is posted to a system that could not be opened",
+                         m_captains[i].name.c_str());
+        }
     }
 }
 
@@ -5655,24 +6080,61 @@ bool SpaceWorld::bubbleHoldsLiveFight(const SystemBubble& bubble)
     return false;
 }
 
+bool SpaceWorld::bubbleHoldsPlayerAsset(const SystemBubble& bubble) const
+{
+    // ⚑⚑⚑⚑ `decisions/015`'s SECOND SET, WHICH WAS PROVABLY EMPTY UNTIL THIS
+    // STAGE. "The player's system, plus every system holding a player asset" -
+    // and an owned ship you are not flying was an `OwnedShip{storedSystem,
+    // storedStation}` row parked at a station, which is not in the sky at all.
+    // A captain on a STATIONARY order is the first thing that puts one there.
+    //
+    // ⚑⚑⚑ ASKED OF THE RECORD AND NEVER OF THE REGISTRY, AND THAT IS THE ONE
+    // THING THIS FUNCTION MUST GET RIGHT. The obvious implementation walks the
+    // bubble's `CaptainPuppet` pool - and it would be a circle: the body exists
+    // because the bubble is held, and the bubble would be held because the body
+    // exists. One tick where the hull has not been spawned yet, or a tick after
+    // it was despawned for a rebuild, and the bubble is released out from under
+    // the captain standing in it. The ORDER is what holds a system open,
+    // because the order is what the player gave and what the player can take
+    // back.
+    for (std::size_t i = 0; i < m_captains.size(); ++i) {
+        if (!stationary(m_captains[i].order.kind)) {
+            continue;
+        }
+        if (captainSystem(i) == bubble.system) {
+            return true;
+        }
+    }
+    return false;
+}
+
 double SpaceWorld::bubbleRetentionSeconds(const SystemBubble& bubble) const
 {
-    if (bubbleHoldsLiveFight(bubble)) {
-        return kCoolingSeconds;
-    }
-    // ⚑⚑⚑ PHASE 39'S CLAUSE GOES HERE AND IS THE ONLY THING IT ADDS.
-    // `decisions/015` asks for "the player's system, plus every system holding
-    // a player asset", and the second half is provably empty today: an owned
-    // ship you are not flying is an `OwnedShip{storedSystem, storedStation}`
-    // row parked at a station, and there is no representation of a ship of
-    // yours in space without you until a captain puts one there. When there
-    // is, it reads
+    // ⚑⚑⚑⚑ PHASE 39'S CLAUSE, AND IT IS NOT THE ONE PHASE 38 DRAFTED FOR IT.
+    // The line left here read
     //
     //     if (bubbleHoldsPlayerAsset(bubble)) { return kHeldIndefinitely; }
     //
-    // which is why this returns SECONDS rather than a bool: a parked asset is
-    // not held for two minutes, it is held for as long as it is parked, and a
-    // predicate has nowhere to put that difference.
+    // with a comment arguing that this is "why this returns SECONDS rather than
+    // a bool: a parked asset is not held for two minutes, it is held for as
+    // long as it is parked, and a predicate has nowhere to put that
+    // difference". The argument was right about the requirement and wrong about
+    // where it goes, and there is no `kHeldIndefinitely` in this file as a
+    // result. A sentinel large enough to mean "forever" is a number that
+    // `enforceBubbleCap` then compares against real hold times, that gets
+    // written into a save and read back, and that has to be recognised again
+    // everywhere it is decremented. What "held for as long as it is parked"
+    // actually needs is for the countdown to be RESTARTED while the asset is
+    // there, and the only function that can do that is the one holding the
+    // clock - `releaseCooledBubbles`, below.
+    //
+    // So this stays what its name says: the seconds a bubble is worth keeping
+    // at the moment the player walks out of it. Both callers of it are asking
+    // the same question and the answer to both is the same two minutes; what
+    // differs is that one of them is renewed and the other is not.
+    if (bubbleHoldsLiveFight(bubble) || bubbleHoldsPlayerAsset(bubble)) {
+        return kCoolingSeconds;
+    }
     return 0.0;
 }
 
@@ -5734,22 +6196,61 @@ void SpaceWorld::enforceBubbleCap()
     while (m_bubbles.size() > kMaxInstantiatedSystems) {
         // From slot 1: the player's bubble is the front one and is never a
         // candidate, whatever the cap says.
-        std::size_t coldest = 1;
-        for (std::size_t i = 2; i < m_bubbles.size(); ++i) {
-            if (m_bubbles[i]->holdSeconds < m_bubbles[coldest]->holdSeconds) {
+        //
+        // ⚑⚑⚑⚑ AND NEITHER IS A CAPTAIN'S, WHICH IS THE STAGE C CHANGE AND THE
+        // DATA-LOSS BUG THE PHASE'S RISK REGISTER NAMED IN ADVANCE. The comment
+        // this function used to carry justified the drop like this: "Nothing
+        // dangles either: every reference that outlives a bubble is coarse-layer
+        // state keyed by SYSTEM (wrecks, rock depletion, trader routes,
+        // standing)." That was exactly right when it was written and it is
+        // exactly wrong about a bubble a captain is working in. An `OwnedShip`
+        // row is not coarse-layer state keyed by a system - it is the player's
+        // property, and the thing it names is an entity inside the registry
+        // about to be freed. Where evicting an ambient bubble is a degradation
+        // (the system is generated fresh next time), evicting this one is a
+        // freighter the player paid sixty thousand credits for, and the ore in
+        // its hold, ceasing to exist with no wreck, no death path and no line
+        // anywhere that a person could find afterwards.
+        std::size_t coldest = m_bubbles.size();
+        for (std::size_t i = 1; i < m_bubbles.size(); ++i) {
+            if (bubbleHoldsPlayerAsset(*m_bubbles[i])) {
+                continue;
+            }
+            if (coldest == m_bubbles.size() || m_bubbles[i]->holdSeconds < m_bubbles[coldest]->holdSeconds) {
                 coldest = i;
             }
+        }
+        // ⚑⚑⚑ SO THE CAP IS SOFT NOW, AND IT IS SOFT ON PURPOSE (the user's
+        // ruling 11, taken before a line was written). When every retained
+        // bubble is a captain's there is nothing this function is allowed to
+        // choose, and the honest thing to do is stop rather than pick the least
+        // bad victim. The alternatives were both worse: refusing the order at
+        // the Crew tab makes a button's availability depend on how many fights
+        // the player happens to have walked out of in the last two minutes, and
+        // demoting the seventh captain to a coarse record builds a second
+        // representation of mining for a case that needs seven simultaneous
+        // captains to reach.
+        //
+        // What bounds it instead is the fleet: a held bubble costs a hull the
+        // player had to buy and a captain they had to hire, so the ceiling is
+        // what they can afford rather than a constant. `kMaxInstantiatedSystems`
+        // keeps its full authority over the bubbles nobody paid for - a cooling
+        // fight, a console `instantiate`, an ambient retention - which is every
+        // bubble that can appear without the player deciding to make one.
+        if (coldest == m_bubbles.size()) {
+            break;
         }
         // ⚑⚑ DROPPING A BUBBLE RUNS NO DEATH PATH, AND THAT IS BOTH WHY IT IS
         // SAFE AND WHY IT IS LOSSY. Nothing is killed, so nothing is recorded:
         // no wreck, no kill credit, no standing change. The system simply
         // reverts to being generated fresh on the next arrival, which is the
         // pre-Phase-38 behaviour - a degradation, never a corruption. Nothing
-        // dangles either: every reference that outlives a bubble is coarse-layer
-        // state keyed by SYSTEM (wrecks, rock depletion, trader routes,
-        // standing), and the one world-scoped list of entity indices,
-        // `m_collisionShipIndices`, is per-tick scratch refilled inside the
-        // per-bubble loop.
+        // dangles, and that clause is now TRUE BECAUSE OF THE SKIP ABOVE rather
+        // than true of everything: of the bubbles this loop can still choose
+        // from, every reference that outlives one is coarse-layer state keyed by
+        // SYSTEM (wrecks, rock depletion, trader routes, standing), and the one
+        // world-scoped list of entity indices, `m_collisionShipIndices`, is
+        // per-tick scratch refilled inside the per-bubble loop.
         m_bubbles.erase(m_bubbles.begin() + static_cast<std::ptrdiff_t>(coldest));
     }
 }
@@ -5758,6 +6259,36 @@ void SpaceWorld::releaseCooledBubbles(double dt)
 {
     for (std::size_t i = m_bubbles.size(); i > 1; --i) {
         SystemBubble& bubble = *m_bubbles[i - 1];
+        // ⚑⚑⚑⚑ THE DOOR `kCoolingSeconds` FORBIDS, OPENED FOR EXACTLY ONE
+        // REASON, WHICH IS THE WHOLE OF WHAT STAGE C ADDS TO THIS FUNCTION.
+        // That constant's own words: "Counted DOWN only, never refreshed - a
+        // refresh is how 'a stalemate pins a bubble forever' gets back in
+        // through the door the ceiling closes." Every word of that is still
+        // true of the condition it was written about. What makes a refresh
+        // dangerous is that a LIVE FIGHT is a condition the world can hold true
+        // by accident and forever: two ships that cannot kill each other keep
+        // `threatTimer` warm between them with nobody deciding anything, so a
+        // per-tick re-ask would be the sim renewing its own lease.
+        //
+        // A standing order is the opposite kind of condition on every axis that
+        // matters here. The PLAYER set it, the player can see it on the Crew
+        // tab, and one button takes it away - so a bubble held this way is held
+        // deliberately, by a decision that is visible in a screen and bounded
+        // by how many hulls the player owns. That is why it is safe to renew
+        // and why the fight case still is not, and it is the only reason this
+        // branch exists.
+        //
+        // ⚑⚑ IT WRITES THE ORDINARY COOLING TIME RATHER THAN A SENTINEL, AND
+        // THAT IS WHAT MAKES STANDING DOWN CORRECT FOR FREE. The tick after an
+        // order is cancelled or a captain is recalled, this stops renewing and
+        // the bubble is on `kCoolingSeconds` - the same two minutes any system
+        // gets - rather than on however much of a huge number is left. A player
+        // who calls a captain home does not want the system they were working
+        // pinned open for the rest of the session.
+        if (bubbleHoldsPlayerAsset(bubble)) {
+            bubble.holdSeconds = kCoolingSeconds;
+            continue;
+        }
         bubble.holdSeconds -= dt;
         if (bubble.holdSeconds <= 0.0) {
             m_bubbles.erase(m_bubbles.begin() + static_cast<std::ptrdiff_t>(i - 1));
@@ -6715,6 +7246,27 @@ bool SpaceWorld::killMinerPuppet(std::uint32_t market)
         for (std::size_t i = 0; i < miners.size(); ++i) {
             if (miners.values()[i].market == market) {
                 handleShipDestroyed(bubble, miners.entityIndices()[i]);
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool SpaceWorld::killCaptainPuppet(std::size_t captainIndex)
+{
+    // ⚑ `killMinerPuppet`'s lever against a different body, and it exists for
+    // the same reason that one does: the consequence of a captain's hull dying
+    // is a thing a test and a drive have to be able to CAUSE, because waiting
+    // for a raider to find one is waiting on a die roll. There is no coarse
+    // record to strike off either - a stationary captain's body IS the record -
+    // so this is the whole implementation.
+    for (std::size_t slot = 0; slot < m_bubbles.size(); ++slot) {
+        SystemBubble& bubble = *m_bubbles[slot];
+        const ecs::Pool<CaptainPuppet>& puppets = bubble.registry.storage<CaptainPuppet>();
+        for (std::size_t i = 0; i < puppets.size(); ++i) {
+            if (puppets.values()[i].captainIndex == captainIndex) {
+                handleShipDestroyed(bubble, puppets.entityIndices()[i]);
                 return true;
             }
         }
@@ -8222,6 +8774,95 @@ bool SpaceWorld::orderHaul(std::size_t captainIndex, std::uint32_t market, std::
     return true;
 }
 
+float SpaceWorld::shipMiningPower(const OwnedShip& ship) const
+{
+    if (m_defs == nullptr) {
+        return 0.0f;
+    }
+    // ⚑⚑ THE FIT, NOT THE HULL, AND THAT IS WHAT MAKES THE ORDER A DECISION.
+    // `resolvedShipDef` is "the ship as flown" - a hull with what is actually
+    // bolted into its mounts, which is where the player's shipyard money went -
+    // so a freighter with two Deep Core Lasers cuts eighteen units a second and
+    // the same freighter straight off the forecourt cuts nothing and cannot be
+    // posted at all.
+    //
+    // ⚑ SUMMED OVER EVERY BEAM RATHER THAN THE BEST ONE, on `applyShipDef`'s
+    // rule: the hull's mount list IS the armament, and a second laser is a
+    // hardpoint the player gave up something else for. It walks the def's
+    // mounts rather than a spawned `ShipArmament`, because this is asked at the
+    // Crew tab about a hull parked on a pad, which has no body to read.
+    float power = 0.0f;
+    const assets::ShipDef def = resolvedShipDef(ship);
+    for (const assets::ShipMount& mount : def.mounts) {
+        if (!assets::mountTakesWeapon(mount.kind) || mount.fit.empty()) {
+            continue;
+        }
+        const assets::WeaponDef* weapon = m_defs->findWeapon(mount.fit.c_str());
+        if (weapon != nullptr) {
+            power += weapon->miningPower;
+        }
+    }
+    return power;
+}
+
+bool SpaceWorld::orderMine(std::size_t captainIndex, std::string* outError)
+{
+    // EVERY DOOR `orderHaul` CHECKS, IN THE SAME ORDER AND FOR THE SAME
+    // REASONS, because they are facts about giving a person an order and not
+    // about which order it is. What differs is only the last two.
+    if (!isDocked()) {
+        return refuse("must be docked to give a captain an order", outError);
+    }
+    if (captainIndex >= m_captains.size()) {
+        return refuse("no such captain", outError);
+    }
+    Captain& captain = m_captains[captainIndex];
+    if (captain.ship >= m_fleet.size()) {
+        return refuse("'" + captain.name + "' has no ship", outError);
+    }
+    const OwnedShip& ship = m_fleet[captain.ship];
+    if (ship.storedSystem != m_currentSystem || ship.storedStation != m_dockedStation) {
+        return refuse("'" + captain.name + "' is not here - their ship is stored elsewhere", outError);
+    }
+    if (captain.order.kind != OrderKind::None) {
+        return refuse("'" + captain.name + "' already has orders - cancel them first", outError);
+    }
+    const std::uint32_t here = dockedMarket();
+    if (here == kNoIndex) {
+        return refuse("no market here to sell the ore at", outError);
+    }
+    // ⚑⚑⚑ THE ROCK IS ASKED FOR BEFORE THE ORDER IS TAKEN, AND IT IS THE ONE
+    // REFUSAL THAT COULD NOT BE ANSWERED FROM THE CREW TAB'S OWN STATE. A field
+    // is a pure function of the system's seed (`fieldCountFor` is the single
+    // definition of that rule and the galaxy generator already asks it, which
+    // is why a Mining Outpost is never placed where there is nothing to dig).
+    // The Core tier draws from {0, 1} fields, so "this system has no rock" is a
+    // real and reachable answer rather than a defensive line.
+    if (m_mining.fieldCount(m_currentSystem) == 0) {
+        return refuse("there is nothing to mine in this system", outError);
+    }
+    if (shipMiningPower(ship) <= 0.0f) {
+        return refuse("'" + captain.name + "' has no mining beam on that hull", outError);
+    }
+    captain.order = {.kind = OrderKind::Mine, .marketA = here, .marketB = kNoIndex, .stopping = false};
+    captain.mine = {};
+    // THE HULL LEAVES THE PAD, THROUGH THE SAME TWO LINES `beginCaptainTransit`
+    // USES AND FOR ITS REASON RATHER THAN BY COPYING IT. `sellShip`,
+    // `switchShip` and `recallCaptain` all refuse a hull whose stored station is
+    // not the one you are standing on, and `kNoIndex` is never that - so a ship
+    // out at a rock cannot be sold, boarded or handed back through any door,
+    // and none of the three needed a clause about mining either.
+    OwnedShip& hull = m_fleet[captain.ship];
+    hull.storedSystem = kNoIndex;
+    hull.storedStation = kNoIndex;
+    SOL_LOG_INFO("%s will work the rock in %s and sell at %s (%.1f units/s)",
+                 captain.name.c_str(),
+                 m_galaxy.systems[m_currentSystem].name.c_str(),
+                 dockedStationName(),
+                 static_cast<double>(shipMiningPower(hull)));
+    return true;
+}
+
 bool SpaceWorld::cancelOrder(std::size_t captainIndex, std::string* outError)
 {
     if (captainIndex >= m_captains.size()) {
@@ -8236,6 +8877,23 @@ bool SpaceWorld::cancelOrder(std::size_t captainIndex, std::string* outError)
     // standing on; calling somebody off a route is a message, and requiring a
     // flight to the far end of their own run to send it would make a bad order
     // cost more to cancel than it cost to give.
+    // ⚑⚑⚑ THE SAME FIELD ANSWERS BOTH ORDER KINDS AND IT IS TRUE FOR TWO
+    // DIFFERENT REASONS, WHICH IS WORTH SAYING BECAUSE ONE OF THEM IS A HAZARD
+    // AND THE OTHER IS COURTESY (stage C). For a haul, `stopping` exists
+    // because there is nowhere to put a laden hull between two gates - the
+    // falls-between-representations defect reached by pressing a button. For a
+    // mining order that hazard does not exist at all: the dock is in the same
+    // system as the rock, so standing down on the spot would be perfectly safe.
+    // It waits anyway, because the hold is full of ore the player's captain
+    // spent real minutes cutting and throwing it away to save one flight across
+    // one system is not a saving anybody asked for. They take the load in and
+    // park.
+    if (stationary(captain.order.kind)) {
+        captain.order.stopping = true;
+        captain.mine.phase = MinePhase::Selling;
+        SOL_LOG_INFO("%s will bring the load in and stand down", captain.name.c_str());
+        return true;
+    }
     if (captain.haul.leg.phase == sim::TraderPhase::InTransit) {
         captain.order.stopping = true;
         SOL_LOG_INFO("%s will stand down at the end of this leg", captain.name.c_str());
@@ -8276,6 +8934,19 @@ std::uint32_t SpaceWorld::captainSystem(std::size_t captainIndex) const
     if (captain.ship >= m_fleet.size()) {
         return kNoIndex;
     }
+    // ⚑⚑⚑ A STATIONARY CAPTAIN IS IN THE SYSTEM THEIR ORDER NAMES, AND IT IS
+    // ANSWERED HERE BECAUSE THE HULL IS PARKED NOWHERE (stage C). `orderMine`
+    // clears `storedSystem`/`storedStation` for the reason `beginCaptainTransit`
+    // does - a hull that is flying is not on a pad, and the three stored-ship
+    // rules refuse `kNoIndex` for free - so the fallback below would answer
+    // "nowhere" for a ship that is very much somewhere. The ORDER is the
+    // durable statement of where they are, which is the same thing that makes
+    // `bubbleHoldsPlayerAsset` answerable without a body.
+    if (stationary(captain.order.kind)) {
+        return captain.order.marketA < m_economy.markets().size()
+                   ? m_economy.markets()[captain.order.marketA].systemIndex
+                   : kNoIndex;
+    }
     const sim::TraderRoute route = captainRoute(captainIndex);
     if (route.leg == sim::TraderLeg::None) {
         return m_fleet[captain.ship].storedSystem; // parked at a station somewhere
@@ -8296,6 +8967,7 @@ bool SpaceWorld::systemIsInstantiated(std::uint32_t system) const
 void SpaceWorld::settleCaptainSale(Captain& captain, std::uint32_t market)
 {
     CaptainHaul& haul = captain.haul;
+    CaptainLedger& ledger = captain.ledger;
     if (haul.leg.cargo <= 0.0f || market >= m_economy.markets().size()) {
         return;
     }
@@ -8327,8 +8999,8 @@ void SpaceWorld::settleCaptainSale(Captain& captain, std::uint32_t market)
     m_playerCredits += gross - cut;
     haul.outlay -= basis;
     haul.leg.cargo = std::max(0.0f, aboard - sold.units);
-    haul.earned += profit - cut;
-    haul.paid += cut;
+    ledger.earned += profit - cut;
+    ledger.paid += cut;
     SOL_LOG_INFO("%s sold %.0f %s for %.0f cr (%.0f profit, %.0f to them)",
                  captain.name.c_str(),
                  static_cast<double>(sold.units),
@@ -8575,10 +9247,10 @@ void SpaceWorld::rollCaptainAttrition(std::size_t captainIndex, double dt)
                  captain.name.c_str(),
                  m_galaxy.systems[route.system].name.c_str(),
                  captain.haul.outlay);
-    captain.haul.earned -= captain.haul.outlay;
+    captain.ledger.earned -= captain.haul.outlay;
     captain.haul.outlay = 0.0;
     captain.haul.leg.cargo = 0.0f;
-    ++captain.haul.losses;
+    ++captain.ledger.losses;
 }
 
 void SpaceWorld::tickCaptains(double dt)
@@ -8586,6 +9258,13 @@ void SpaceWorld::tickCaptains(double dt)
     if (m_captains.empty() || m_economy.markets().empty() || m_defs == nullptr) {
         return;
     }
+    // ⚑⚑⚑ THE STATIONARY HALF IS TICKED BY ITS BUBBLE AND NOT BY THIS LOOP, SO
+    // ALL THIS OWES IT IS A BUBBLE TO BE TICKED IN (stage C). Done here rather
+    // than inside the per-bubble pass for the obvious reason that a bubble which
+    // does not exist yet cannot be iterated to, and done before the haul loop so
+    // a captain posted this tick is working on the next one rather than the one
+    // after.
+    openStationaryCaptainBubbles();
     for (std::size_t i = 0; i < m_captains.size(); ++i) {
         Captain& captain = m_captains[i];
         if (captain.order.kind != OrderKind::Haul) {
@@ -12544,6 +13223,15 @@ void SpaceWorld::tick(double dt)
             // the record goes on being the truth and the body is paced to it,
             // so there is never a moment when a captain is two things.
             syncCaptainPuppets(bubble);
+            // ⚑⚑ AND THE STATIONARY HALF, WHICH IS NOT A PROMOTION AT ALL AND
+            // IS RUN FROM THE SAME PLACE BECAUSE IT IS THE SAME QUESTION (Phase
+            // 39 stage C). A mining captain's bubble is held open for as long as
+            // the order stands, so there is no coarse record to promote out of
+            // and no clock to be paced against: this ticks the work itself. It
+            // sits after `syncCaptainPuppets` so that the two never argue over
+            // one `CaptainPuppet` - each skips the other's order kinds, and the
+            // order is what says which.
+            tickMiningCaptains(bubble, dt);
             // And a ship at the rock for every outpost here that is digging
             // (Phase 8x stage 6). Same reconcile, same rule, a different coarse
             // actor: an extractor's draw is activity the sim has been
@@ -12886,6 +13574,34 @@ void SpaceWorld::handleShipDestroyed(SystemBubble& bubble,
     // on the FACTS, not on the call site - and the fact was always in hand,
     // because it is the registry the victim was walked out of.
     ecs::Registry& registry = bubble.registry;
+    // ⚑⚑⚑⚑ A CAPTAIN'S HULL DYING COSTS THE PLAYER THE LOAD, AND THAT IS AN
+    // INTERIM WITH A DATE ON IT (Phase 39 stage C). The full death path - a
+    // wreck, an insurance answer, a standing consequence and a line the player
+    // can find - is stage D's, and stage B already took the same interim on the
+    // itinerant half in its own words: "danger takes the HOLD and not the hull,
+    // because the death path is stage D's". What stage C changes is that the
+    // hazard stopped being theoretical: a mining captain sits in a live bubble
+    // with the local traffic, so raiders can and do reach them while the player
+    // is two systems away.
+    //
+    // Without this the body is simply respawned at the dock on the next tick
+    // with the hold intact, so being killed costs NOTHING - which is worse than
+    // a missing death path, because it is a positive statement that the danger
+    // is free. The ore in the hold is the part that can be taken today; the
+    // hull is what stage D has to bury.
+    if (const CaptainPuppet* puppet = registry.storage<CaptainPuppet>().tryGet(entityIndex);
+        puppet != nullptr && puppet->captainIndex < m_captains.size()) {
+        Captain& captain = m_captains[puppet->captainIndex];
+        if (stationary(captain.order.kind) && captain.mine.units > 0.0f) {
+            SOL_LOG_WARN("%s lost %.0f units in %s",
+                         captain.name.c_str(),
+                         static_cast<double>(captain.mine.units),
+                         m_galaxy.systems[bubble.system].name.c_str());
+            captain.mine.units = 0.0f;
+            captain.mine.phase = MinePhase::Cutting;
+            ++captain.ledger.losses;
+        }
+    }
     // Fireball at the wreck site, scaled by the hull.
     const core::DVec3 wreckPosition = registry.storage<Transform>().get(entityIndex).position;
     m_combatEffects.spawnExplosion(
@@ -13503,9 +14219,22 @@ bool SpaceWorld::saveTo(const char* path, std::string_view displayName)
         writer.write(captain.haul.leg.commodity);
         writer.write(captain.haul.leg.cargo);
         writer.write(captain.haul.outlay);
-        writer.write(captain.haul.earned);
-        writer.write(captain.haul.paid);
-        writer.write(captain.haul.losses);
+        // The mining record (v41). ⚑ THE FIELD AND THE HOLD, AND DELIBERATELY
+        // NOT THE ROCK: an entity index is meaningless in a bubble that has not
+        // been built yet, and a bubble is rebuilt from the galaxy every load. So
+        // the durable half is which field is being worked and what is aboard,
+        // and the body picks a rock out of the field again on its first tick.
+        writer.write(static_cast<std::uint8_t>(captain.mine.phase));
+        writer.write(captain.mine.field);
+        writer.write(captain.mine.rockStep);
+        writer.write(captain.mine.rockSeconds);
+        writer.write(captain.mine.commodity);
+        writer.write(captain.mine.units);
+        // And the ledger (v41, moved out of the haul), which is one person's
+        // lifetime rather than one order kind's - see `CaptainLedger`.
+        writer.write(captain.ledger.earned);
+        writer.write(captain.ledger.paid);
+        writer.write(captain.ledger.losses);
     }
     m_economy.save(writer);
     m_factionSim.save(writer); // v5: relations, war flags, standings, raids
@@ -13702,17 +14431,26 @@ bool SpaceWorld::loadFrom(const char* path)
             !reader.read(captain.haul.leg.origin) || !reader.read(captain.haul.leg.market) ||
             !reader.read(captain.haul.leg.travelRemaining) || !reader.read(captain.haul.leg.legTotal) ||
             !reader.read(captain.haul.leg.commodity) || !reader.read(captain.haul.leg.cargo) ||
-            !reader.read(captain.haul.outlay) || !reader.read(captain.haul.earned) ||
-            !reader.read(captain.haul.paid) || !reader.read(captain.haul.losses)) {
+            !reader.read(captain.haul.outlay)) {
             return false;
         }
-        if (kind > static_cast<std::uint8_t>(OrderKind::Haul) ||
-            phase > static_cast<std::uint8_t>(sim::TraderPhase::InTransit)) {
+        std::uint8_t minePhase = 0;
+        if (!reader.read(minePhase) || !reader.read(captain.mine.field) ||
+            !reader.read(captain.mine.rockStep) || !reader.read(captain.mine.rockSeconds) ||
+            !reader.read(captain.mine.commodity) || !reader.read(captain.mine.units) ||
+            !reader.read(captain.ledger.earned) || !reader.read(captain.ledger.paid) ||
+            !reader.read(captain.ledger.losses)) {
+            return false;
+        }
+        if (kind > static_cast<std::uint8_t>(OrderKind::Mine) ||
+            phase > static_cast<std::uint8_t>(sim::TraderPhase::InTransit) ||
+            minePhase > static_cast<std::uint8_t>(MinePhase::Selling)) {
             return false;
         }
         captain.order.kind = static_cast<OrderKind>(kind);
         captain.order.stopping = stopping != 0;
         captain.haul.leg.phase = static_cast<sim::TraderPhase>(phase);
+        captain.mine.phase = static_cast<MinePhase>(minePhase);
         // THE SAME SHAPE `Economy::load` USES ON ITS OWN TRADERS, and for the
         // same reason: a clock read off disk that runs backwards or a hold that
         // is negative describes a haul this code cannot fly, and the failure it
@@ -13720,7 +14458,18 @@ bool SpaceWorld::loadFrom(const char* path)
         // the player's money already spent.
         if (captain.haul.leg.legTotal < 0.0 || captain.haul.leg.travelRemaining < 0.0 ||
             captain.haul.leg.travelRemaining > captain.haul.leg.legTotal || captain.haul.leg.cargo < 0.0f ||
-            captain.haul.outlay < 0.0) {
+            captain.haul.outlay < 0.0 || captain.mine.units < 0.0f || captain.mine.rockSeconds < 0.0) {
+            return false;
+        }
+        // ⚑⚑ A STATIONARY ORDER MUST NAME A MARKET, AND THAT IS NOT A TIDINESS
+        // CHECK (stage C). `captainSystem` reads the system out of
+        // `order.marketA` for a mining captain, and `bubbleHoldsPlayerAsset`
+        // reads `captainSystem` - so a Mine order with no market on it is a
+        // captain who is nowhere, whose bubble is therefore held nowhere, whose
+        // hull is never spawned and never ticked. It is exactly the shape of
+        // the two defects stage B's live drive found: a save the game writes
+        // and then cannot make sense of, with nothing said about it.
+        if (stationary(captain.order.kind) && captain.order.marketA == kNoIndex) {
             return false;
         }
         // A captain with no ship cannot be flying one, and an order pointing at

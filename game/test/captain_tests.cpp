@@ -135,6 +135,113 @@ constexpr std::uint32_t screenBit(StationScreen screen)
     return 1u << static_cast<std::uint32_t>(screen);
 }
 
+// A dock a MINING captain can be posted from: a crew hall to hire in, a ship
+// counter to buy a hull at, and rock in the system to cut. ⚑ Searched in the
+// shipped galaxy rather than authored, on this file's own rule - a recipe
+// change that stopped producing such a place fails here instead of passing
+// vacuously.
+//
+// ⚑⚑⚑ AND THE SEARCH FOUND A CONTENT FACT WORTH KEEPING: THE OUTFITTER IS NOT
+// IN THE MASK BECAUSE ASKING FOR IT LEAVES EXACTLY ONE DOCK IN THE GALAXY, AND
+// THAT ONE HAS NO ROCK. Crew hall + outfitter + ship sales co-occur at a single
+// station out of 81 systems' worth, so there is no single dock where a player
+// can hire somebody, buy them a hull, bolt a beam on it and post them to a
+// field - the flow crosses at least one lane, always. Buying is gated on the
+// faction CATALOG rather than on the screen (`stationSells`), so the world
+// still allows the refit here; what the missing tab means is that a human has
+// to fly, which is a design observation rather than a bug and is recorded
+// where somebody re-running this search will find it.
+[[nodiscard]] Dock findMiningDock(Fixture& fixture)
+{
+    const SpaceWorld& w = fixture.world();
+    const std::uint32_t wanted = screenBit(StationScreen::Crew) | screenBit(StationScreen::Shipyard);
+    for (std::uint32_t sys = 0; sys < w.galaxy().systems.size(); ++sys) {
+        if (w.mining().fieldCount(sys) == 0) {
+            continue;
+        }
+        for (std::uint32_t st = 0; st < w.galaxy().systems[sys].stations.size(); ++st) {
+            if ((w.stationScreens(sys, st) & wanted) == wanted) {
+                std::printf("  mining dock: %s / %s (system %u, station %u), %u field(s)\n",
+                            w.galaxy().systems[sys].name.c_str(),
+                            w.galaxy().systems[sys].stations[st].name.c_str(),
+                            sys,
+                            st,
+                            w.mining().fieldCount(sys));
+                return {sys, st};
+            }
+        }
+    }
+    return {};
+}
+
+// Buys a hull, boards it, bolts a mining beam on, and steps back into the
+// starter - which is the sequence a player performs, through the same four
+// public calls, rather than a fit written straight into the fleet row. It has
+// to be done from the SEAT because `buyFitting` refits the active ship, which
+// is itself worth having a test walk through: a captain flies the fit you gave
+// them, so giving them one means being in the chair first.
+// Bolts a mining beam onto the ACTIVE hull, naming the mount rather than asking
+// for "wherever it goes".
+//
+// ⚑⚑ AND THE MOUNT HAS TO BE NAMED, WHICH IS THE FIRST THING THIS TEST TAUGHT
+// ME ABOUT THE ORDER ITSELF. `buyFitting(id, nullptr)` means "the first EMPTY
+// mount that accepts it", which is what a catalog Buy button means - and every
+// hull this yard sells arrives with its authored fit already in every weapon
+// mount it has. So a player fitting a mining laser is always REPLACING a gun,
+// never adding one, and a mining captain is therefore a hull that has given up
+// its armament to do the job. That is the trade the phase's next stage has to
+// price when a raider finds one.
+[[nodiscard]] bool armMiningBeam(Fixture& fixture)
+{
+    SpaceWorld& w = fixture.world();
+    const sol::assets::ShipDef def = w.resolvedShipDef(w.activeShip());
+    for (const sol::assets::WeaponDef& weapon : fixture.defs.weapons()) {
+        if (weapon.miningPower <= 0.0f) {
+            continue;
+        }
+        for (const sol::assets::ShipMount& mount : def.mounts) {
+            if (!sol::assets::mountTakesWeapon(mount.kind)) {
+                continue;
+            }
+            std::string error;
+            if (w.buyFitting(weapon.id.c_str(), mount.id.c_str(), &error)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+[[nodiscard]] std::size_t buyAndArmAMiner(Fixture& fixture, float* outPower = nullptr)
+{
+    SpaceWorld& w = fixture.world();
+    const std::size_t slot = fixture.buyAnyShip();
+    if (slot == 0 || !w.switchShip(slot)) {
+        return 0;
+    }
+    if (!armMiningBeam(fixture) || !w.switchShip(0)) {
+        return 0;
+    }
+    if (outPower != nullptr) {
+        *outPower = w.shipMiningPower(w.fleet()[slot]);
+    }
+    return slot;
+}
+
+// Hires the first candidate in this hall and hands them `slot`. Returns their
+// captain index, or `kNone`.
+[[nodiscard]] std::size_t hireAndGive(Fixture& fixture, std::size_t slot)
+{
+    SpaceWorld& w = fixture.world();
+    std::vector<CaptainCandidate> hall;
+    w.captainCandidates(hall);
+    if (hall.empty() || !w.hireCaptain(0)) {
+        return kNone;
+    }
+    const std::size_t captain = w.captains().size() - 1;
+    return w.assignCaptain(captain, slot) ? captain : kNone;
+}
+
 // A HALF-SECOND STEP, AND IT IS NOT A SHORTCUT. A haul is quoted at
 // `traderLegSeconds * 2 + hops * jumpSeconds` = 180 s at minimum and 280 s
 // across five gates, so a leg at 1/60 is seventeen thousand frames of full
@@ -146,6 +253,19 @@ constexpr double kCoarseStep = 0.5;
 // Runs the world until `captain` next parks, or until the budget runs out.
 // Returns false on the budget, which is what makes a stalled haul a failing
 // test rather than a hanging one.
+// Steps the world until `predicate` answers true, or the budget runs out.
+template <typename Predicate>
+[[nodiscard]] bool runUntil(SpaceWorld& world, Predicate predicate, int maxSteps = 4000)
+{
+    for (int i = 0; i < maxSteps; ++i) {
+        world.tick(kCoarseStep);
+        if (predicate()) {
+            return true;
+        }
+    }
+    return false;
+}
+
 [[nodiscard]] bool runUntilParked(SpaceWorld& world, std::size_t captain, int maxSteps = 2000)
 {
     for (int i = 0; i < maxSteps; ++i) {
@@ -580,15 +700,15 @@ SOL_TEST(a_haul_pays_the_player_the_profit_and_the_captain_a_cut_of_it)
         }
         for (int legs = 0; legs < 4 && !paidOut; ++legs) {
             const double before = fixture.world().playerCredits();
-            const double earnedBefore = fixture.world().captains()[0].haul.earned;
+            const double earnedBefore = fixture.world().captains()[0].ledger.earned;
             SOL_REQUIRE(runUntilParked(fixture.world(), 0));
             const game::Captain& captain = fixture.world().captains()[0];
             const double gained = fixture.world().playerCredits() - before;
-            const double booked = captain.haul.earned - earnedBefore;
+            const double booked = captain.ledger.earned - earnedBefore;
             // The identity. A tenth of a credit of slack over a five-figure
             // trade is float, not a bug.
             SOL_CHECK(std::abs(gained - booked) < 0.5);
-            paidOut = captain.haul.paid > 0.0;
+            paidOut = captain.ledger.paid > 0.0;
         }
         if (!paidOut) {
             SOL_REQUIRE(fixture.world().cancelOrder(0));
@@ -598,9 +718,9 @@ SOL_TEST(a_haul_pays_the_player_the_profit_and_the_captain_a_cut_of_it)
     SOL_REQUIRE(paidOut); // no route in reach ever made money: that is a finding
 
     const game::Captain& captain = fixture.world().captains()[0];
-    const double profit = captain.haul.earned + captain.haul.paid;
+    const double profit = captain.ledger.earned + captain.ledger.paid;
     SOL_REQUIRE(profit > 0.0);
-    const double share = captain.haul.paid / profit;
+    const double share = captain.ledger.paid / profit;
     std::printf("  %s took %.1f%% of %.0f cr profit (their cut is %.1f%%)\n",
                 captain.name.c_str(),
                 share * 100.0,
@@ -736,8 +856,8 @@ SOL_TEST(a_watched_haul_and_an_unwatched_one_agree_and_the_watched_one_has_a_hul
     // The credits agree too, and they are the number a doubled income would
     // separate first.
     SOL_CHECK(std::abs(watched.world().playerCredits() - blind.world().playerCredits()) < 0.5);
-    SOL_CHECK(std::abs(watched.world().captains()[0].haul.earned - blind.world().captains()[0].haul.earned) <
-              0.5);
+    SOL_CHECK(std::abs(watched.world().captains()[0].ledger.earned -
+                       blind.world().captains()[0].ledger.earned) < 0.5);
 }
 
 // ⚑⚑ A CANCEL LANDS THE SHIP RATHER THAN STOPPING IT WHERE IT IS. Standing a
@@ -877,7 +997,7 @@ SOL_TEST(a_save_carries_the_order_and_the_leg_and_refuses_a_clock_that_runs_back
     SOL_REQUIRE(before.haul.leg.phase == sol::sim::TraderPhase::InTransit);
     const game::CaptainOrder order = before.order;
     const sol::sim::EconomyTrader leg = before.haul.leg;
-    const double earned = before.haul.earned;
+    const double earned = before.ledger.earned;
     const double outlay = before.haul.outlay;
 
     const std::string dir = std::string(SOL_GAME_TEST_SCRATCH_DIR) + "/captains-b";
@@ -899,7 +1019,7 @@ SOL_TEST(a_save_carries_the_order_and_the_leg_and_refuses_a_clock_that_runs_back
     SOL_CHECK(after.haul.leg.legTotal == leg.legTotal);
     SOL_CHECK(after.haul.leg.cargo == leg.cargo);
     SOL_CHECK(after.haul.outlay == outlay);
-    SOL_CHECK(after.haul.earned == earned);
+    SOL_CHECK(after.ledger.earned == earned);
     // The leg it resumes on is the leg it was flying, which is the fact the
     // save exists for - a route that restarted would be free money.
     SOL_CHECK(reloaded.world().captainRoute(0).leg == fixture.world().captainRoute(0).leg);
@@ -997,4 +1117,582 @@ SOL_TEST(a_captain_with_orders_keeps_the_ship_even_before_the_first_tick)
     SOL_REQUIRE(fixture.world().recallCaptain(0));
     SOL_REQUIRE(fixture.world().dismissCaptain(0));
     SOL_CHECK(fixture.world().captains().empty());
+}
+
+// ===========================================================================
+// Phase 39 stage C - the stationary half.
+// ===========================================================================
+
+// ⚑⚑⚑⚑ THE STAGE'S EXIT, AS ONE TEST: leave a captain working a field, go two
+// systems away, spend time there, come back and find the hull at the rock with
+// a fuller hold - AND the evidence that it was TICKED rather than restored.
+// The last clause is the whole assertion. A system rebuilt from its seed
+// produces a captain in exactly the same state as one that was held, so
+// "cutting, at a rock" is not evidence of anything; what cannot be faked by a
+// rebuild is a hold that grew and a rock count that advanced WHILE THE PLAYER
+// WAS SOMEWHERE ELSE.
+SOL_TEST(a_mining_captain_works_a_field_while_the_player_is_two_systems_away)
+{
+    Fixture fixture;
+    const Dock dock = findMiningDock(fixture);
+    SOL_REQUIRE(dock.system != kNone);
+    SOL_REQUIRE(fixture.walkIn(dock));
+
+    float power = 0.0f;
+    const std::size_t slot = buyAndArmAMiner(fixture, &power);
+    SOL_REQUIRE(slot != 0);
+    SOL_CHECK(power > 0.0f);
+    const std::size_t captain = hireAndGive(fixture, slot);
+    SOL_REQUIRE(captain != kNone);
+
+    SpaceWorld& w = fixture.world();
+    SOL_REQUIRE(w.orderMine(captain));
+    SOL_CHECK(w.captains()[captain].order.kind == game::OrderKind::Mine);
+    // The order takes the hull off the pad, which is what makes the three
+    // stored-ship refusals cover a mining captain without a fourth rule.
+    SOL_CHECK(w.fleet()[slot].storedSystem == kNone);
+    SOL_CHECK(!w.recallCaptain(captain));
+    SOL_CHECK(!w.dismissCaptain(captain));
+
+    // Let them reach the rock and start cutting while the player is still here.
+    SOL_REQUIRE(runUntil(w, [&] { return w.captains()[captain].mine.units > 0.0f; }));
+    const float aboardBefore = w.captains()[captain].mine.units;
+    const std::uint32_t rocksBefore = w.captains()[captain].mine.rockStep;
+
+    // Two systems away. ⚑ The far system is reached through `enterSystem`,
+    // which is the same door a jump uses, so the bubble the captain is in has
+    // to be RETAINED by the retention policy rather than by the player's
+    // presence - which is precisely the thing stage C changed.
+    SOL_REQUIRE(w.undock());
+    const auto& links = w.galaxy().links;
+    std::uint32_t elsewhere = kNone;
+    for (const sol::sim::GateLink& link : links) {
+        if (link.a == dock.system) {
+            elsewhere = link.b;
+            break;
+        }
+        if (link.b == dock.system) {
+            elsewhere = link.a;
+            break;
+        }
+    }
+    SOL_REQUIRE(elsewhere != kNone);
+    SOL_REQUIRE(w.enterSystem(elsewhere));
+    SOL_CHECK(w.currentSystemIndex() != dock.system);
+
+    // A minute of somebody else's sky. The bubble the captain is in must still
+    // be open at the end of it - `kCoolingSeconds` is 120 s, so a hold that was
+    // merely counting down would not survive an order of magnitude more than
+    // this, and the loop below runs well past it.
+    for (int i = 0; i < 600; ++i) {
+        w.tick(kCoarseStep);
+    }
+    SOL_CHECK(w.systemIsInstantiated(dock.system));
+    const float aboardAway = w.captains()[captain].mine.units;
+    const std::uint32_t rocksAway = w.captains()[captain].mine.rockStep;
+    std::printf("  away: %.1f -> %.1f units, %u -> %u rocks, %.0f cr earned\n",
+                static_cast<double>(aboardBefore),
+                static_cast<double>(aboardAway),
+                rocksBefore,
+                rocksAway,
+                w.captains()[captain].ledger.earned);
+    // ⚑⚑ THE ANTI-VACUITY, AND IT IS AN *OR*. Five minutes at a real beam rate
+    // is more than one hold on a small hull, so the honest statement is that
+    // work HAPPENED: either there is more ore aboard than there was, or a load
+    // has been sold and the ledger has moved. A test that demanded only the
+    // first would fail on a fast beam for being too successful.
+    SOL_CHECK(aboardAway > aboardBefore || w.captains()[captain].ledger.earned > 0.0 ||
+              rocksAway > rocksBefore);
+
+    // And walking back in finds the same hull in the sky, not a fresh one.
+    SOL_REQUIRE(w.enterSystem(dock.system));
+    w.tick(kCoarseStep);
+    std::vector<game::CaptainPuppetInfo> bodies;
+    w.captainPuppetInfo(bodies);
+    SOL_CHECK(bodies.size() == 1);
+    if (!bodies.empty()) {
+        SOL_CHECK(bodies[0].captainIndex == captain);
+    }
+}
+
+// ⚑⚑⚑⚑ THE DATA-LOSS BUG THE PHASE'S RISK REGISTER NAMED IN ADVANCE, AS A
+// TEST. `enforceBubbleCap` drops the coldest retained bubble with no death
+// path - no wreck, no kill credit, nothing recorded - and before stage C the
+// victim could be the one holding the player's freighter and the ore in its
+// hold, which would simply cease to exist. Two assertions, and the second is
+// the sharp one:
+//
+//   1. The captain's system survives the cap being exceeded by systems nobody
+//      paid for.
+//   2. It survives a TIE, which is the case the phase spec singled out:
+//      "among bubbles all sharing one indefinite sentinel the winner is
+//      whichever is earliest in the vector, which is arrival order and nothing
+//      else". A freshly opened bubble and a renewed captain's bubble both sit
+//      at `kCoolingSeconds` exactly, so `<` never separates them and the
+//      captain's - opened first, and therefore earliest - was precisely the one
+//      arrival order would have taken.
+SOL_TEST(the_bubble_cap_never_evicts_the_system_a_captain_is_working_in)
+{
+    Fixture fixture;
+    const Dock dock = findMiningDock(fixture);
+    SOL_REQUIRE(dock.system != kNone);
+    SOL_REQUIRE(fixture.walkIn(dock));
+    const std::size_t slot = buyAndArmAMiner(fixture);
+    SOL_REQUIRE(slot != 0);
+    const std::size_t captain = hireAndGive(fixture, slot);
+    SOL_REQUIRE(captain != kNone);
+
+    SpaceWorld& w = fixture.world();
+    SOL_REQUIRE(w.orderMine(captain));
+    SOL_REQUIRE(w.undock());
+
+    // Stand somewhere else, so the captain's system is a RETAINED bubble rather
+    // than the player's own - which is the only way it can be a candidate at
+    // all, since slot 0 is never one.
+    std::uint32_t elsewhere = dock.system == 0 ? 1u : 0u;
+    SOL_REQUIRE(w.enterSystem(elsewhere));
+    w.tick(kCoarseStep);
+    SOL_REQUIRE(w.systemIsInstantiated(dock.system));
+
+    // ⚑⚑ AND THE CAP HAS TO BE *EXCEEDED* FOR THE EVICTION TO RUN AT ALL, WHICH
+    // IS WORTH KNOWING BEFORE READING THIS: `enforceBubbleCap` is called from
+    // `leaveSystemFor` and from the loader, not every tick - the ordinary fence
+    // is `instantiateSystem` REFUSING at the cap. So the only way to reach the
+    // eviction is to get over the line first, and the door that can is the
+    // captain tick's own (`overCap`). Ambient bubbles are forced in through it
+    // here to make the victim pool real.
+    std::vector<std::uint32_t> ambient;
+    for (std::uint32_t sys = 0; sys < w.galaxy().systems.size() && ambient.size() < 5; ++sys) {
+        if (sys != dock.system && sys != w.currentSystemIndex() && w.instantiateSystem(sys, true)) {
+            ambient.push_back(sys);
+        }
+    }
+    SOL_REQUIRE(ambient.size() == 5);
+    SOL_REQUIRE(w.instantiatedSystemCount() > SpaceWorld::kMaxInstantiatedSystems);
+
+    // Every bubble in the list is now on the same `kCoolingSeconds` - the
+    // captain's because the sweep renews it, the forced ones because that is
+    // what `instantiateSystem` puts them on - so `<` never separates them and
+    // the old rule fell back on ARRIVAL ORDER, in which the captain's is the
+    // earliest and therefore the victim. Jumping somewhere else runs the cap.
+    std::uint32_t empty = kNone;
+    for (std::uint32_t sys = 0; sys < w.galaxy().systems.size() && empty == kNone; ++sys) {
+        if (sys != dock.system && !w.systemIsInstantiated(sys)) {
+            empty = sys;
+        }
+    }
+    SOL_REQUIRE(empty != kNone);
+    SOL_REQUIRE(w.enterSystem(empty));
+    std::printf("  %zu bubble(s) after the cap ran, at a cap of %zu\n",
+                w.instantiatedSystemCount(),
+                SpaceWorld::kMaxInstantiatedSystems);
+    // ⚑ THE CAP STILL BINDS WHAT IT IS ALLOWED TO CHOOSE FROM, and something was
+    // actually taken - a cap that had simply stopped enforcing would satisfy the
+    // survival check below and fail this one, which is the whole difference the
+    // user's ruling turns on.
+    SOL_CHECK(w.instantiatedSystemCount() <= SpaceWorld::kMaxInstantiatedSystems);
+    SOL_CHECK(w.systemIsInstantiated(dock.system));
+}
+
+// ⚑⚑⚑⚑ THE OTHER HALF OF RULING 11: WHEN EVERY RETAINED BUBBLE IS ONE SOMEBODY
+// PAID FOR, THE CAP GOES SOFT RATHER THAN PICKING A VICTIM. Six captains in six
+// systems against a cap of six, so the player's own bubble makes seven and
+// there is nothing `enforceBubbleCap` is allowed to choose.
+//
+// ⚑⚑⚑ AND SETTING IT UP TAUGHT ME THE SHAPE OF THE ORDER IN THE REAL GALAXY,
+// WHICH NO AMOUNT OF READING THE CODE WOULD HAVE. A captain can be HIRED
+// anywhere there is a crew hall, but a captain can only be GIVEN a hull where
+// the player can buy one: `assignCaptain` refuses the ship the player is
+// currently flying, and a pilot has one body - so ferrying a spare hull to a
+// station that does not sell hulls strands you in it. The dock that starts a
+// mining captain is therefore a SHIPYARD in a system with rock, and the crew
+// hall can be anywhere at all.
+SOL_TEST(the_cap_goes_soft_rather_than_evict_a_system_somebody_paid_for)
+{
+    Fixture fixture;
+    SpaceWorld& w = fixture.world();
+
+    // Hire first, everywhere: a hall offers three, so this walks halls until
+    // there are enough people to post.
+    const std::size_t wanted = SpaceWorld::kMaxInstantiatedSystems;
+    for (std::uint32_t sys = 0; sys < w.galaxy().systems.size() && w.captains().size() < wanted; ++sys) {
+        for (std::uint32_t st = 0; st < w.galaxy().systems[sys].stations.size(); ++st) {
+            if ((w.stationScreens(sys, st) & screenBit(StationScreen::Crew)) == 0) {
+                continue;
+            }
+            if (!fixture.walkIn({sys, st})) {
+                continue;
+            }
+            std::vector<CaptainCandidate> hall;
+            w.captainCandidates(hall);
+            for (std::size_t i = 0; i < hall.size() && w.captains().size() < wanted; ++i) {
+                (void)w.hireCaptain(0); // the hall re-filters after each hire
+            }
+            break;
+        }
+    }
+    SOL_REQUIRE(w.captains().size() >= wanted);
+
+    // Then post them, one per system that has rock and a counter that sells
+    // hulls.
+    std::vector<std::uint32_t> posted;
+    std::size_t nextCaptain = 0;
+    for (std::uint32_t sys = 0; sys < w.galaxy().systems.size() && posted.size() < wanted; ++sys) {
+        if (w.mining().fieldCount(sys) == 0) {
+            continue;
+        }
+        for (std::uint32_t st = 0; st < w.galaxy().systems[sys].stations.size(); ++st) {
+            if ((w.stationScreens(sys, st) & screenBit(StationScreen::Shipyard)) == 0) {
+                continue;
+            }
+            if (!fixture.walkIn({sys, st})) {
+                continue;
+            }
+            const std::size_t hull = buyAndArmAMiner(fixture);
+            if (hull == 0 || nextCaptain >= w.captains().size()) {
+                break;
+            }
+            if (w.assignCaptain(nextCaptain, hull) && w.orderMine(nextCaptain)) {
+                ++nextCaptain;
+                posted.push_back(sys);
+            }
+            break;
+        }
+    }
+    std::printf("  %zu captain(s) posted to %zu system(s), cap is %zu\n",
+                w.captains().size(),
+                posted.size(),
+                SpaceWorld::kMaxInstantiatedSystems);
+    SOL_REQUIRE(posted.size() >= wanted);
+
+    // Stand somewhere none of them is, so every retained bubble is a captain's
+    // and the player's own is the seventh.
+    SOL_REQUIRE(w.undock());
+    std::uint32_t empty = kNone;
+    for (std::uint32_t sys = 0; sys < w.galaxy().systems.size() && empty == kNone; ++sys) {
+        if (std::find(posted.begin(), posted.end(), sys) == posted.end()) {
+            empty = sys;
+        }
+    }
+    SOL_REQUIRE(empty != kNone);
+    SOL_REQUIRE(w.enterSystem(empty));
+    w.tick(kCoarseStep);
+
+    // ⚑ Every one of them still open, and the count past the cap - which is the
+    // ruling said as an assertion. `enforceBubbleCap` ran on every one of those
+    // ticks and found nothing it was allowed to take.
+    for (const std::uint32_t sys : posted) {
+        SOL_CHECK(w.systemIsInstantiated(sys));
+    }
+    SOL_CHECK(w.instantiatedSystemCount() > SpaceWorld::kMaxInstantiatedSystems);
+    std::printf("  %zu bubble(s) open, all of them paid for\n", w.instantiatedSystemCount());
+
+    // ⚑⚑ AND THE ANTI-VACUITY, WHICH IS THE WHOLE DIFFERENCE BETWEEN A SOFT CAP
+    // AND A BROKEN ONE - AND IT IS ANSWERED AT THE OTHER DOOR. `enforceBubbleCap`
+    // has run out of victims, but the cap has TWO enforcers and only one of them
+    // went soft: `instantiateSystem` still refuses flatly, so a system nobody
+    // paid for cannot be opened at all while six captains are working. The cap
+    // did not stop meaning something; it stopped being able to take back what
+    // the player bought.
+    const std::size_t before = w.instantiatedSystemCount();
+    std::uint32_t ambient = kNone;
+    for (std::uint32_t sys = 0; sys < w.galaxy().systems.size() && ambient == kNone; ++sys) {
+        if (sys != w.currentSystemIndex() && std::find(posted.begin(), posted.end(), sys) == posted.end()) {
+            ambient = sys;
+        }
+    }
+    SOL_REQUIRE(ambient != kNone);
+    SOL_CHECK(!w.instantiateSystem(ambient));
+    SOL_CHECK(!w.systemIsInstantiated(ambient));
+    SOL_CHECK(w.instantiatedSystemCount() == before);
+}
+
+// ⚑⚑⚑ THE DOOR `kCoolingSeconds` FORBIDS, OPENED AND THEN SHUT AGAIN. The
+// refresh in `releaseCooledBubbles` is the one thing stage C added to that
+// function, and the whole argument for it is that the condition is one the
+// PLAYER can take away. So the test that matters is not that the bubble is held
+// - it is that standing the captain down lets it go, on the ordinary two
+// minutes, rather than leaving a system pinned open for the session.
+SOL_TEST(standing_a_mining_captain_down_lets_their_system_cool_again)
+{
+    Fixture fixture;
+    const Dock dock = findMiningDock(fixture);
+    SOL_REQUIRE(dock.system != kNone);
+    SOL_REQUIRE(fixture.walkIn(dock));
+    const std::size_t slot = buyAndArmAMiner(fixture);
+    SOL_REQUIRE(slot != 0);
+    const std::size_t captain = hireAndGive(fixture, slot);
+    SOL_REQUIRE(captain != kNone);
+
+    SpaceWorld& w = fixture.world();
+    SOL_REQUIRE(w.orderMine(captain));
+    SOL_REQUIRE(w.undock());
+    std::uint32_t elsewhere = dock.system == 0 ? 1u : 0u;
+    SOL_REQUIRE(w.enterSystem(elsewhere));
+    for (int i = 0; i < 400; ++i) {
+        w.tick(kCoarseStep);
+    }
+    SOL_REQUIRE(w.systemIsInstantiated(dock.system));
+
+    // Stand them down. The cancel lands at the next delivery, so the captain
+    // finishes the load and parks - and only then does the hold stop being
+    // renewed.
+    SOL_REQUIRE(w.cancelOrder(captain));
+    SOL_REQUIRE(runUntil(w, [&] { return w.captains()[captain].order.kind == game::OrderKind::None; }));
+    // The hull is on a pad again, which is what makes it sellable and boardable
+    // and the person dismissable.
+    SOL_CHECK(w.fleet()[slot].storedSystem == dock.system);
+    SOL_CHECK(w.fleet()[slot].storedStation == dock.station);
+
+    // And now the system cools. `kCoolingSeconds` is 120 s; this runs 300.
+    for (int i = 0; i < 600; ++i) {
+        w.tick(kCoarseStep);
+    }
+    SOL_CHECK(!w.systemIsInstantiated(dock.system));
+}
+
+// ⚑⚑ A MINING ORDER IS REFUSED FOR THREE REASONS AND EACH ONE IS A DIFFERENT
+// SENTENCE, because the two that are new to this stage are both things a player
+// FIXES rather than reports: fly somewhere with rock, or buy a beam. A single
+// "cannot" would send them looking for a bug.
+SOL_TEST(a_mining_order_refuses_a_hull_with_no_beam_and_a_system_with_no_rock)
+{
+    Fixture fixture;
+    const Dock dock = findMiningDock(fixture);
+    SOL_REQUIRE(dock.system != kNone);
+    SOL_REQUIRE(fixture.walkIn(dock));
+
+    SpaceWorld& w = fixture.world();
+    // A hull straight off the forecourt: no beam on it.
+    const std::size_t bare = fixture.buyAnyShip();
+    SOL_REQUIRE(bare != 0);
+    SOL_CHECK(w.shipMiningPower(w.fleet()[bare]) == 0.0f);
+    const std::size_t captain = hireAndGive(fixture, bare);
+    SOL_REQUIRE(captain != kNone);
+    std::string error;
+    SOL_CHECK(!w.orderMine(captain, &error));
+    SOL_CHECK(error.find("beam") != std::string::npos);
+    std::printf("  no beam: %s\n", error.c_str());
+
+    // Arm it, and the same order is taken. ⚑ The captain has to hand the hull
+    // back first: `switchShip` refuses to seat the player in a ship somebody
+    // else is flying, which is stage B's own guard and the reason this reads
+    // like a shipyard visit rather than a field refit.
+    SOL_REQUIRE(w.recallCaptain(captain));
+    SOL_REQUIRE(w.switchShip(bare));
+    SOL_REQUIRE(armMiningBeam(fixture));
+    SOL_REQUIRE(w.switchShip(0));
+    SOL_REQUIRE(w.assignCaptain(captain, bare));
+    SOL_CHECK(w.orderMine(captain, &error));
+
+    // ⚑ THE ANTI-VACUITY IS THE ROCK, AND THE SHIPPED GALAXY HAS TO PROVIDE IT.
+    // The Core tier draws from {0, 1} fields, so a system with none is real
+    // content rather than a defensive branch - and if the generator ever stopped
+    // producing one this would fail rather than quietly stop testing anything.
+    std::uint32_t barren = kNone;
+    for (std::uint32_t sys = 0; sys < w.galaxy().systems.size() && barren == kNone; ++sys) {
+        if (w.mining().fieldCount(sys) != 0) {
+            continue;
+        }
+        for (std::uint32_t st = 0; st < w.galaxy().systems[sys].stations.size(); ++st) {
+            if ((w.stationScreens(sys, st) & screenBit(StationScreen::Shipyard)) != 0) {
+                barren = sys;
+                break;
+            }
+        }
+    }
+    SOL_REQUIRE(barren != kNone);
+    std::printf("  %s has no field to work\n", w.galaxy().systems[barren].name.c_str());
+    SOL_REQUIRE(w.cancelOrder(captain));
+    SOL_REQUIRE(runUntil(w, [&] { return w.captains()[captain].order.kind == game::OrderKind::None; }));
+}
+
+// ⚑⚑⚑ A CAPTAIN'S ORE COMES OUT OF THE SAME GROUND EVERYONE ELSE'S DOES, which
+// is the claim that separates this from an accrual with a ship drawn next to
+// it. `MiningSim` keeps a sparse depletion record per rock; if a mining captain
+// cut through anything else, the record would not move and the system's stock
+// would be untouched by five minutes of work.
+SOL_TEST(a_mining_captain_depletes_the_same_rock_the_player_s_beam_would)
+{
+    Fixture fixture;
+    const Dock dock = findMiningDock(fixture);
+    SOL_REQUIRE(dock.system != kNone);
+    SOL_REQUIRE(fixture.walkIn(dock));
+    const std::size_t slot = buyAndArmAMiner(fixture);
+    SOL_REQUIRE(slot != 0);
+    const std::size_t captain = hireAndGive(fixture, slot);
+    SOL_REQUIRE(captain != kNone);
+
+    SpaceWorld& w = fixture.world();
+    const std::size_t recordsBefore = w.mining().depletionRecordCount();
+    SOL_REQUIRE(w.orderMine(captain));
+    SOL_REQUIRE(runUntil(w, [&] { return w.captains()[captain].mine.units > 0.0f; }));
+    const std::size_t recordsAfter = w.mining().depletionRecordCount();
+    std::printf("  depletion records %zu -> %zu, %.1f units aboard\n",
+                recordsBefore,
+                recordsAfter,
+                static_cast<double>(w.captains()[captain].mine.units));
+    SOL_CHECK(recordsAfter > recordsBefore);
+}
+
+// ⚑⚑⚑ RULING 6 EVALUATED AGAINST A ZERO OUTLAY, WHICH IS WHERE THE STAGE
+// CLAIMS IT NEEDED NO SPECIAL CASE. The cut is of the PROFIT; ore out of the
+// ground cost nothing, so the profit is the gross and the captain's share of a
+// mined sale must be exactly their cut of what it fetched. The player's credits
+// and the ledger have to agree with each other and with the percentage, which
+// is three statements of one arithmetic and the only way to catch a cut taken
+// over the wrong base.
+SOL_TEST(a_mined_load_pays_the_captain_their_cut_of_the_whole_sale)
+{
+    Fixture fixture;
+    const Dock dock = findMiningDock(fixture);
+    SOL_REQUIRE(dock.system != kNone);
+    SOL_REQUIRE(fixture.walkIn(dock));
+    const std::size_t slot = buyAndArmAMiner(fixture);
+    SOL_REQUIRE(slot != 0);
+    const std::size_t captain = hireAndGive(fixture, slot);
+    SOL_REQUIRE(captain != kNone);
+
+    SpaceWorld& w = fixture.world();
+    const float cut = w.captains()[captain].cut;
+    SOL_REQUIRE(w.orderMine(captain));
+    const double creditsBefore = w.playerCredits();
+    SOL_REQUIRE(runUntil(w, [&] { return w.captains()[captain].ledger.paid > 0.0; }, 20000));
+
+    const Captain& who = w.captains()[captain];
+    const double gross = who.ledger.earned + who.ledger.paid;
+    const double share = who.ledger.paid / gross;
+    std::printf("  %s: %.0f cr gross, %.0f to them (%.2f%% against a %.2f%% cut)\n",
+                who.name.c_str(),
+                gross,
+                who.ledger.paid,
+                share * 100.0,
+                static_cast<double>(cut) * 100.0);
+    SOL_CHECK(std::abs(share - static_cast<double>(cut)) < 1.0e-6);
+    // And the money actually moved, net of the cut. ⚑ The player is paid the
+    // whole sale less the cut, so this is the same identity said against the
+    // purse rather than against the ledger - which is what catches a ledger
+    // that books what the credits never received.
+    SOL_CHECK(std::abs((w.playerCredits() - creditsBefore) - who.ledger.earned) < 1.0e-6);
+}
+
+// ⚑⚑⚑ THE SAVE, AND THE TWO THINGS IT DELIBERATELY DOES NOT WRITE. A mining
+// captain's rock is an entity index in a bubble that will not exist next
+// session, so what round-trips is the FIELD and the hold - and the body has to
+// pick a rock out of them again and go back to work. The v41 loader also has to
+// refuse a stationary order naming no market, which is the shape of both defects
+// stage B's live drive found: a save the game writes and then cannot open.
+SOL_TEST(a_mining_captain_survives_a_save_and_goes_back_to_the_field)
+{
+    Fixture fixture;
+    const Dock dock = findMiningDock(fixture);
+    SOL_REQUIRE(dock.system != kNone);
+    SOL_REQUIRE(fixture.walkIn(dock));
+    const std::size_t slot = buyAndArmAMiner(fixture);
+    SOL_REQUIRE(slot != 0);
+    const std::size_t captain = hireAndGive(fixture, slot);
+    SOL_REQUIRE(captain != kNone);
+
+    SpaceWorld& w = fixture.world();
+    SOL_REQUIRE(w.orderMine(captain));
+    SOL_REQUIRE(runUntil(w, [&] { return w.captains()[captain].mine.units > 0.0f; }));
+    const game::Captain before = w.captains()[captain];
+
+    const std::string dir = std::string(SOL_GAME_TEST_SCRATCH_DIR) + "/captains-c";
+    SOL_REQUIRE(sol::platform::createDirectories(dir.c_str()));
+    const std::string path = dir + "/mine.sav";
+    SOL_REQUIRE(w.saveTo(path.c_str(), "Mining"));
+
+    Fixture reloaded;
+    SOL_REQUIRE(reloaded.world().loadFrom(path.c_str()));
+    SOL_REQUIRE(reloaded.world().captains().size() == w.captains().size());
+    const game::Captain& after = reloaded.world().captains()[captain];
+    SOL_CHECK(after.order.kind == game::OrderKind::Mine);
+    SOL_CHECK(after.order.marketA == before.order.marketA);
+    SOL_CHECK(after.mine.field == before.mine.field);
+    SOL_CHECK(after.mine.commodity == before.mine.commodity);
+    SOL_CHECK(std::abs(after.mine.units - before.mine.units) < 1.0e-3f);
+    SOL_CHECK(after.ledger.earned == before.ledger.earned);
+
+    // ⚑ AND IT GOES BACK TO WORK WITHOUT BEING TOLD. The system is not open on
+    // the tick after a load - `openStationaryCaptainBubbles` is what opens it -
+    // so this is the load path and the retention policy meeting, which is the
+    // one seam a reload could silently drop.
+    SpaceWorld& r = reloaded.world();
+    SOL_REQUIRE(runUntil(r, [&] {
+        return r.systemIsInstantiated(dock.system) && r.captains()[captain].mine.units > before.mine.units;
+    }));
+    std::printf("  reloaded and cutting again: %.1f -> %.1f units\n",
+                static_cast<double>(before.mine.units),
+                static_cast<double>(r.captains()[captain].mine.units));
+}
+
+// ⚑⚑⚑⚑ WHAT KILLING A MINING CAPTAIN COSTS TODAY, ASSERTED RATHER THAN
+// ASSUMED - AND THE REASON THIS TEST EXISTS IS THAT THE LIVE DRIVE WALKED INTO
+// IT. A stationary captain sits in a bubble that is fully simulated, with the
+// local traffic in it, so raiders reach them while the player is two systems
+// away: the drive's log carries `'sol.freighter' destroyed` lines from a system
+// the player had left. That is the split working exactly as `decisions/015`
+// intends - "a fight that happened" rather than a die roll - but it means the
+// consequence had to be decided in THIS stage rather than in the one that owns
+// the death path.
+//
+// The answer is stage B's, restated: **danger takes the hold and not the hull.**
+// The load is lost and the ledger records it; the hull is respawned and the
+// order stands, because burying somebody the player hired needs a wreck, an
+// insurance answer, a standing consequence and a line they can find, and all
+// four are stage D's. What this test pins is that being killed costs SOMETHING:
+// without the hook the body is simply rebuilt at the dock with the hold intact,
+// which is a positive statement that the danger is free.
+SOL_TEST(killing_a_mining_captain_costs_the_load_and_the_order_stands)
+{
+    Fixture fixture;
+    const Dock dock = findMiningDock(fixture);
+    SOL_REQUIRE(dock.system != kNone);
+    SOL_REQUIRE(fixture.walkIn(dock));
+    const std::size_t slot = buyAndArmAMiner(fixture);
+    SOL_REQUIRE(slot != 0);
+    const std::size_t captain = hireAndGive(fixture, slot);
+    SOL_REQUIRE(captain != kNone);
+
+    SpaceWorld& w = fixture.world();
+    SOL_REQUIRE(w.orderMine(captain));
+    SOL_REQUIRE(runUntil(w, [&] { return w.captains()[captain].mine.units > 0.0f; }));
+    const float aboard = w.captains()[captain].mine.units;
+    const std::uint32_t lossesBefore = w.captains()[captain].ledger.losses;
+    SOL_REQUIRE(aboard > 0.0f);
+
+    // ⚑ Through the ordinary death path, not by deleting the entity: the point
+    // is what the GAME does when a captain's hull is shot, and every other
+    // consequence of a kill has to keep working around it.
+    SOL_REQUIRE(w.killCaptainPuppet(captain));
+    SOL_CHECK(w.captains()[captain].mine.units == 0.0f);
+    SOL_CHECK(w.captains()[captain].ledger.losses == lossesBefore + 1);
+    // The order stands and the person still has the hull on the books - which is
+    // the half stage D has to take away.
+    SOL_CHECK(w.captains()[captain].order.kind == game::OrderKind::Mine);
+    SOL_CHECK(w.captains()[captain].ship == slot);
+    std::printf("  killed with %.0f units aboard: hold %0.f, losses %u -> %u, order stands\n",
+                static_cast<double>(aboard),
+                static_cast<double>(w.captains()[captain].mine.units),
+                lossesBefore,
+                w.captains()[captain].ledger.losses);
+
+    // And they go back to work, because nothing has told them not to.
+    SOL_REQUIRE(runUntil(w, [&] { return w.captains()[captain].mine.units > 0.0f; }));
+    std::printf("  back at the rock with %.1f units\n",
+                static_cast<double>(w.captains()[captain].mine.units));
+
+    // ⚑ THE ANTI-VACUITY: an EMPTY hold is not a loss. A captain killed on the
+    // way out to the field has nothing to lose, and booking one there would
+    // make `losses` a count of deaths rather than of cargo - which is what the
+    // Crew tab prints it as.
+    SOL_REQUIRE(w.cancelOrder(captain));
+    SOL_REQUIRE(runUntil(w, [&] { return w.captains()[captain].order.kind == game::OrderKind::None; }));
+    SOL_REQUIRE(w.orderMine(captain));
+    w.tick(kCoarseStep);
+    const std::uint32_t losses = w.captains()[captain].ledger.losses;
+    SOL_REQUIRE(w.captains()[captain].mine.units == 0.0f);
+    SOL_CHECK(w.killCaptainPuppet(captain));
+    SOL_CHECK(w.captains()[captain].ledger.losses == losses);
 }

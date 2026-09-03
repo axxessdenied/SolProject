@@ -811,6 +811,11 @@ struct StationAction
         // `AssignCaptain` carries a fleet slot: a screen names rows, and the
         // one place that turns a row into a world id is the executor.
         OrderHaul,
+        // ⚑ `OrderMine` CARRIES NOTHING (Phase 39 stage C), and that is the
+        // order's own shape rather than a field left blank: "mine here" names
+        // no place, so the captain is the selection and there is no row to
+        // turn into a world id. The executor reads `selectedCaptain` alone.
+        OrderMine,
         CancelOrder, // index = the employed captain
     };
     Kind kind = Kind::None;
@@ -868,6 +873,13 @@ struct StationPanel
     const char* captainRoute = "";
     bool captainCanStandDown = false; // they have an order to cancel
     bool captainCanRecall = false;    // their hull is parked on this dock, idle
+    // Stage C. ⚑ TWO FIELDS RATHER THAN ONE, because the two refusals a
+    // mining order has that a haul does not - no rock in this system, no beam
+    // on that hull - are things the player can DO something about, and a
+    // greyed button with no sentence beside it would send them to look for a
+    // bug instead of to a shipyard.
+    bool captainCanMine = false;
+    const char* captainMineNote = ""; // why not, or what the beam cuts at
     // IN, not out: which captain the player has aimed the fleet list at, or -1.
     // Same argument as `selectedMount` above - the screen owns it because it is
     // a thing the player is holding rather than a thing the world knows.

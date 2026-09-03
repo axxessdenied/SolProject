@@ -127,6 +127,48 @@ system converting value on a coarse clock with no bubble and no entity**, and
 nobody has ever called it a spreadsheet. Recorded in full in
 `020-captains-as-people.md`.
 
+### What shipping the stationary half changed, 2026-09-03 (Phase 39 stage C)
+
+**The amendment above held and one of its three measurements produced the
+opposite answer to the one it implied.**
+
+- **The cap is soft now, and only for the half that is paid for** (the user's
+  ruling 11). `enforceBubbleCap` will not choose a bubble a captain is working
+  in, and when every candidate is one it stops rather than picking the least bad
+  victim. `instantiateSystem` still refuses an *ambient* bubble at the cap, so
+  the fence did not stop meaning something — it stopped being able to take back
+  what the player bought.
+- **There is no `kHeldIndefinitely`.** The clause Phase 38 drafted into
+  `bubbleRetentionSeconds` was right about the requirement and wrong about where
+  it goes: a sentinel is a number the cap compares, the save round-trips and
+  every decrement site has to recognise. `bubbleRetentionSeconds` answers the
+  ordinary `kCoolingSeconds` for both of its clauses and `releaseCooledBubbles`
+  **renews** it while the order stands — which is also what makes standing a
+  captain down correct without a second rule, because the tick after the order
+  goes the system is on the same two minutes any other one gets.
+- **⚑⚑⚑ THE COST ARGUMENT ABOVE IS THE ONE THAT MOVED, AND IT MOVED IN THE
+  CHEAP DIRECTION.** `kMaxInstantiatedSystems`' comment reads *"`k` bubbles cost
+  `k*n^2`"*, and the shape of that sentence is what made a soft cap sound
+  frightening. Measured past the cap (debug, 600 frames, shipped galaxy):
+  **1 → 0.069 ms, 4 → 0.467, 6 → 0.629, 8 → 0.996, 10 → 1.261, 12 → 1.496**,
+  against a 16.7 ms frame. The first three reproduce Phase 38's own numbers to
+  the third decimal. **The curve is linear at about 0.12 ms per bubble**, because
+  `resolveCollisions` is quadratic *inside* a bubble and bubbles cannot see each
+  other — so `k` bubbles cost `k` times one, and `n` is a per-system constant
+  that has nothing to do with `k`. A player would need on the order of 130
+  captains to spend a frame, and each of those is a hull they bought.
+
+⚑ **And the coarse layer turned out to be needed by the stationary half after
+all, for one thing.** A field sits 8e7–4e8 m from the barycentre and so does the
+dock a captain sells at, so the run between them is a crossing of a playfield
+that a 120 m/s hull takes days over. `keepTraderOnSchedule` exists for exactly
+that reason — *"the record moves it faster than any hull flies"* — so a
+stationary captain's crossing is paced at
+`MiningParams::fieldMaxDistance / EconomyParams::traderLegSeconds`, a number
+borrowed from the constant whose own comment says *"in-system travel per
+endpoint"*. The split is about where the RECORD lives, not about who is allowed
+to use the coarse fleet's arithmetic.
+
 ## Alternatives considered
 
 - **Coarse away, real when near** (the recommended option, declined). Owned ships

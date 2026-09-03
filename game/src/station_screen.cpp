@@ -853,7 +853,7 @@ void buildCrewTab(UiContext& ui, StationPanel& panel, StationScreenState& state,
                            listHeight(ui, std::max<std::size_t>(giveable, 1)) +
                            // The order section: one status row plus wherever
                            // they could be sent (Phase 39 stage B).
-                           listHeight(ui, 1) +
+                           listHeight(ui, 1) + kRowHeight + // "Work this system" (stage C)
                            listHeight(ui, std::max<std::size_t>(panel.haulDestinations.size(), 1)) +
                            listHeight(ui, hires ? std::max<std::size_t>(panel.captainHires.size(), 1) : 1)
                      : 0.0f) +
@@ -956,6 +956,25 @@ void buildCrewTab(UiContext& ui, StationPanel& panel, StationScreenState& state,
             }
             if (ui.button(inset(cells.secondary, 2.0f), "Recall", panel.captainCanRecall)) {
                 panel.action = {.kind = StationAction::Kind::RecallCaptain, .index = panel.selectedCaptain};
+            }
+            ui.popId();
+
+            // ⚑⚑ "MINE HERE" IS A ROW AND NOT A DESTINATION, WHICH IS THE
+            // ORDER'S SHAPE SHOWING THROUGH THE SCREEN. Every other way of
+            // giving an order on this tab picks something out of a list,
+            // because every other order names a place. This one names the
+            // place the player is standing in, so there is nothing to pick -
+            // and a one-entry list would have been a list pretending to be a
+            // button. The note beside it carries the refusal, because the two
+            // this order can hit are both fixable and neither is guessable.
+            const Rect mineRow = column.row(kRowHeight);
+            rowBackground(ui, mineRow, 1);
+            const CatalogCells mineCells = catalogCells(ui, mineRow, false, false);
+            ui.pushId("mine");
+            clipped(ui, mineCells.name, "Work this system", theme.textPrimary);
+            clipped(ui, mineCells.detail, panel.captainMineNote, theme.textDim);
+            if (ui.button(inset(mineCells.primary, 2.0f), "Mine", panel.captainCanMine)) {
+                panel.action = {.kind = StationAction::Kind::OrderMine, .index = panel.selectedCaptain};
             }
             ui.popId();
 

@@ -60,6 +60,8 @@
 #include "game_audio.hpp"
 #include "space_world.hpp"
 
+#include <chrono>
+#include <cstdio>
 #include <string>
 #include <vector>
 
@@ -903,6 +905,62 @@ SOL_TEST(the_instantiated_system_count_never_passes_its_cap)
 // the sky in the bubble is not the sky the spec would generate — so a filled
 // one would not merely be doubled, it would be a rebuilt system with a stale
 // population inside it.
+// ⚑⚑⚑⚑ WHAT THE SOFT CAP COSTS, MEASURED, BECAUSE THE RULING THAT MADE IT SOFT
+// CAME WITH THAT OBLIGATION ATTACHED (Phase 39 stage C, the user's ruling 11).
+// The cap went soft for captains: a system somebody paid for is never evicted,
+// so the number of instantiated systems is bounded by how many hulls a player
+// can afford rather than by a constant. That trades a known ceiling for an
+// unknown one, and the arc's own standing rule is that a claim about COST is
+// settled by measuring rather than by reading.
+//
+// Phase 38 stage C measured the same curve up to its cap and wrote the numbers
+// into `kMaxInstantiatedSystems`' comment: one bubble 0.067 ms, four 0.47 ms,
+// six 0.64 ms, debug, against a 16.7 ms frame. This continues that line PAST
+// the cap, through the door the captain tick uses, so the shape past six is a
+// measurement rather than an extrapolation. `sim::resolveCollisions` is O(n^2)
+// per bubble with no broadphase, so the honest question is whether the curve
+// bends.
+//
+// ⚑ IT PRINTS AND DOES NOT ASSERT A TIME. A wall clock in a test that runs on
+// three platforms and in two configurations is a flake generator; what it
+// asserts is that the bubbles it is timing actually exist, which is the only
+// way the numbers can be wrong about what they measured.
+SOL_TEST(what_a_bubble_costs_per_frame_past_the_cap)
+{
+    Galaxy g;
+    constexpr int kFrames = 600;
+    constexpr std::size_t kMost = 12;
+
+    std::printf("  bubbles   ms/frame   per bubble\n");
+    for (std::size_t target = 1; target <= kMost; target += (target < 6 ? 1 : 2)) {
+        Galaxy sample;
+        // Through the captain tick's own door, because that is the only one
+        // that can go past the cap - and past the cap is the half Phase 38
+        // could not measure.
+        for (std::uint32_t k = 0; sample.world.instantiatedSystemCount() < target && k < 40; ++k) {
+            const std::uint32_t candidate = sample.furnishedSystem(k);
+            if (candidate == 0xffff'ffffu) {
+                break;
+            }
+            (void)sample.world.instantiateSystem(candidate, true);
+        }
+        if (sample.world.instantiatedSystemCount() != target) {
+            continue; // the galaxy ran out of furnished systems; say nothing
+        }
+        sample.run(30); // let the sky settle before the clock starts
+        const auto start = std::chrono::steady_clock::now();
+        sample.run(kFrames);
+        const auto end = std::chrono::steady_clock::now();
+        const double ms =
+            std::chrono::duration<double, std::milli>(end - start).count() / static_cast<double>(kFrames);
+        std::printf("  %7zu   %8.3f   %10.3f\n", target, ms, ms / static_cast<double>(target));
+        // The anti-vacuity, and the only thing here that can fail: a run that
+        // quietly dropped its bubbles would print a flat line and read as good
+        // news.
+        SOL_CHECK(sample.world.instantiatedSystemCount() == target);
+    }
+}
+
 SOL_TEST(returning_to_a_retained_system_does_not_refill_its_sky)
 {
     Galaxy g;

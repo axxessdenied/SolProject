@@ -669,10 +669,20 @@ struct CaptainPuppet
 {
     std::uint32_t captainIndex = 0;
     // Where this leg ends, in system space. Recomputed when the leg changes
-    // rather than every tick, exactly as a trader's is.
+    // rather than every tick, exactly as a trader's is. A STATIONARY captain
+    // (stage C) keeps its current waypoint here instead - the rock it is
+    // holding off, or the dock it is taking a load in to.
     sol::core::DVec3 destination;
-    // The record moved it this tick rather than its engines.
+    // The record moved it this tick rather than its engines. Never set for a
+    // stationary captain: pacing exists to keep a body in step with a coarse
+    // clock, and a stationary order has no coarse clock to be out of step with.
     std::uint32_t paced = 0;
+    // The rock this hull is cutting, as an entity index in its own bubble, or
+    // `kNoIndex` (stage C). ⚑ Transient on purpose and NOT in `CaptainMine`:
+    // an entity index means nothing after a reload, so the saved record names
+    // the FIELD and the body picks a rock out of it - `MinerPuppet`'s bargain,
+    // against a record the player owns.
+    std::uint32_t rock = 0xffff'ffffu;
 };
 
 // One captain's body, for the console probe and the tests. Same job as
@@ -1295,6 +1305,64 @@ inline constexpr double kMinerRockSeconds = 60.0;
 // and a corridor as wide as the standoff would box a miner in and quietly
 // turn it into scenery.
 inline constexpr double kMinerPathClearance = 200.0;
+// What a captain working a field does about it, and every number in it is
+// borrowed rather than picked (Phase 39 stage C). A captain's hull holds off a
+// rock at the same standoff an outpost's miner does, moves on at the same
+// minute, and needs the same corridor - because it is the same job in the same
+// field, and a second set of constants for it would be two answers to how far
+// away a ship parks from a rock.
+//
+// ⚑ THE ONE NUMBER THAT IS NOT BORROWED IS WHEN A LOAD GOES IN. A hold is
+// taken to the dock at this fraction of full rather than at full, because the
+// last rock always overshoots: a beam cutting 9 units a second into a hold with
+// 4 units of room does not stop at 4, and a captain that waited for exactly
+// full would cut ore it has nowhere to put. Nine tenths is a rock's worth of
+// margin at any beam this game ships.
+inline constexpr float kCaptainHoldFullFraction = 0.9f;
+// How near the dock a captain has to get before the load counts as delivered.
+// ⚑ Deliberately generous and deliberately NOT a docking: a captain does not
+// use the player's dock machinery (that opens a station screen and moves the
+// player), so this is an arrival radius on the station's own position, sized so
+// a freighter settling out of `PilotState::Travel` reliably lands inside it.
+inline constexpr double kCaptainDeliverRange = 2.0e3;
+// ⚑⚑⚑⚑ AND THE CROSSING, WHICH IS THE ONE THING THE STATIONARY HALF STILL
+// NEEDS FROM THE COARSE FLEET - FOUND BY WATCHING A CAPTAIN NEVER ARRIVE.
+// A field sits 8e7 to 4e8 m out (`MiningParams::fieldMinDistance` and its
+// max) and so does the dock it sells at, so the run between them is a real
+// crossing of a playfield, and a hull at a few hundred m/s takes DAYS over
+// it. That is not a mining problem: it is why `keepTraderOnSchedule` exists
+// at all, in its own words - "the record moves it faster than any hull
+// flies" - and 120 coarse haulers have crossed systems this way since Phase
+// 8x.
+//
+// So the number is BORROWED and not invented: `fieldMaxDistance` over
+// `EconomyParams::traderLegSeconds`, whose own comment reads "in-system
+// travel per endpoint" - which is exactly what this is. A stationary captain
+// crosses their system at the speed the economy already says a ship crosses
+// a system at, and the far side of the phase's split turns out to need the
+// coarse layer for one thing after all.
+inline constexpr double kCaptainCruiseSpeed = 4.0e8 / 90.0;
+// ⚑⚑⚑⚑ AND IT DOES *NOT* LET GO EARLY, WHICH IS THE OPPOSITE OF WHAT
+// `keepTraderOnSchedule` DOES AND WAS PAID FOR IN DEAD SHUTTLES. The first
+// cut of this handed the hull over ten kilometres out, on that function's
+// own rule, so the arrival would be flown and a player watching would see a
+// ship come in. Every captain died - `'sol.shuttle' destroyed`, once per
+// crossing, forever - and the reason was already written down in this
+// project, in `sim::chooseWorkRock`'s comment: *"Rocks are solid statics and
+// nothing in the game steers around them: `m_obstacles` holds stations and
+// planets only, so a ship crossing a field has no avoidance at all"*, a
+// paragraph that ends `'sol.freighter' destroyed`. A trader's endpoints are
+// STATIONS, which ships do avoid; a miner's endpoint is a rock inside a
+// cloud of other rocks, and the last ten kilometres into one is the single
+// stretch of space in this game a hull cannot be trusted to cross.
+//
+// So a crossing ends AT the rock, which is `MinerPuppet`'s own answer said
+// as a pace instead of as a spawn (*"Placed where it works rather than at
+// the station"*). What is still flown is everything INSIDE a field - a field
+// is at most `fieldRadiusMax` across, hops between rocks are about a
+// kilometre, and `chooseWorkRock`'s clearance test is what makes those safe.
+// This is the distance below which the pace keeps its hands off.
+inline constexpr double kCaptainCruiseInside = 8.0e3;
 // How long an outpost's draw stops after its miner is killed (Phase 8x stage
 // 6). ⚑ Not picked: traderLegSeconds is the economy's own figure for crossing
 // a system, which is exactly what a replacement has to fly. Killing the ship
@@ -1447,16 +1515,38 @@ struct OwnedShip
 // "the leg they are on" become one field that has to mean both, and this file
 // has paid for that shape before (`TraderPuppet`'s own comment: the entity is a
 // view and the trader is the record).
+// ⚑⚑⚑⚑ THE KIND IS WHAT PICKS THE REPRESENTATION, AND THAT IS THE PHASE'S
+// FIRST RULING SAID AS AN ENUM (stage C). An ITINERANT order rides the coarse
+// layer between systems and promotes when the player is co-located; a
+// STATIONARY one is a full entity in a bubble held open for as long as the
+// order stands. `stationary()` below is the one place that decides which, and
+// every reader of the difference goes through it rather than naming `Mine`.
 enum class OrderKind : std::uint8_t
 {
     None = 0, // idle: parked wherever they last landed
     Haul,     // run between two markets, carrying whatever pays
+    Mine,     // work this system's rock and sell it at the dock you were given
 };
+
+// ⚑⚑⚑ A STATIONARY ORDER HOLDS A BUBBLE, AND THAT IS THE WHOLE OF WHAT THIS
+// PREDICATE MEANS. It is asked by `bubbleHoldsPlayerAsset`, by the cap, by the
+// cooling sweep and by `cancelOrder`, so a sixth order kind added later gets
+// its representation decided in one place instead of in five.
+[[nodiscard]] inline constexpr bool stationary(OrderKind kind)
+{
+    return kind == OrderKind::Mine;
+}
 
 struct CaptainOrder
 {
     OrderKind kind = OrderKind::None;
-    // The two ends of the run, as economy market indices. ⚑ A market index is
+    // The two ends of the run, as economy market indices. ⚑⚑ A MINE ORDER USES
+    // `marketA` FOR THE DOCK THE ORE IS SOLD AT AND LEAVES `marketB` UNSET, and
+    // that is not a field doing two jobs - it is the same job with one end. A
+    // haul names where the cargo comes from and where it goes; a mining captain
+    // is told where to sell, and where the ore comes from is the rock in that
+    // system, which no market index could name anyway.
+    // ⚑ A market index is
     // save-format-safe here for the same reason `MarketMemory::market` already
     // is: the table is built one row per station in system-then-station order
     // from a galaxy that is regenerated from the seed, and a galaxy that
@@ -1469,6 +1559,13 @@ struct CaptainOrder
     // with nothing that knows how to park it - which is the "falls between the
     // two representations" defect the phase's risk register names, arrived at
     // by the player pressing a button. They finish the leg and stand down.
+    //
+    // ⚑⚑⚑ AND IT IS ONLY EVER SET FOR AN ITINERANT ORDER, WHICH IS THE FIRST
+    // PLACE THE SPLIT PAYS FOR ITSELF (stage C). A stationary captain cancels
+    // on the spot: there is no leg to finish and no gate to be caught between,
+    // because a mining captain never leaves the system they were posted to.
+    // The hazard this field exists to avoid is an ITINERANT hazard, and saying
+    // so is cheaper than a second rule that happens to have the same effect.
     bool stopping = false;
 };
 
@@ -1489,13 +1586,59 @@ struct CaptainHaul
     // What the hold cost, and the base the cut is taken over (ruling 6). Held
     // across the leg because the profit is not knowable at either end alone.
     double outlay = 0.0;
-    // Lifetime, for the readout: what they have handed you and what they have
-    // taken. `earned` is NET of the cut, so the two numbers add up to the gross
-    // and neither has to be inferred from the other.
+};
+
+// ⚑⚑⚑⚑ THE LEDGER MOVED OUT OF `CaptainHaul` IN STAGE C, AND IT IS A CORRECTION
+// RATHER THAN A REARRANGEMENT. It sat inside the haul because a haul was the
+// only thing a captain could be doing; with two order kinds it would have to be
+// written twice, and two lifetime totals for one person is Phase 34's
+// parallel-table defect arriving through the door this phase keeps closing. A
+// captain who hauls for an hour, is stood down, and is then sent to a rock is
+// ONE person with ONE record of what they have made - which is exactly what
+// stage E's readout has to print, off one field rather than off a sum over
+// order kinds.
+struct CaptainLedger
+{
+    // Lifetime: what they have handed you and what they have taken. `earned` is
+    // NET of the cut, so the two numbers add up to the gross and neither has to
+    // be inferred from the other.
     double earned = 0.0;
     double paid = 0.0;
-    // Hauls that ended with an empty hold because the route was dangerous.
+    // Loads that ended with an empty hold because something took them.
     std::uint32_t losses = 0;
+};
+
+// What a captain working a field is doing about it right now (stage C).
+//
+// ⚑⚑⚑⚑ THIS ONE HAS NO COARSE TWIN, AND THAT IS THE POINT OF THE SPLIT RATHER
+// THAN AN OMISSION. `CaptainHaul` holds an `EconomyTrader` field for field
+// because a haul exists twice - as a record between systems and as a hull in
+// the sky - and the two must not be allowed to own separate arithmetic. A
+// stationary order exists ONCE: the bubble is held open for as long as the
+// order stands, so the hull in the sky IS the record, and there is no second
+// clock for this to be kept in step with. A `sim::` type mirrored here would be
+// mirroring nothing.
+//
+// ⚑⚑ WHAT IS SAVED IS THE JOB, NOT THE BODY. Bubbles do not survive a load -
+// they are rebuilt from the galaxy - so the rock a captain is on is an entity
+// index that will be a different entity next session. `field` and the hold are
+// the durable half and the body re-chooses a rock from them, which is
+// `MinerPuppet`'s own bargain: the record says which field is being worked and
+// the sky decides which rock in it.
+enum class MinePhase : std::uint8_t
+{
+    Cutting = 0, // parked off a rock, ore accruing
+    Selling,     // hold full or field spent; flying it in to the dock
+};
+
+struct CaptainMine
+{
+    MinePhase phase = MinePhase::Cutting;
+    std::uint32_t field = 0;     // which of this system's fields is being worked
+    std::uint32_t rockStep = 0;  // how many rocks in; for the readout, not the sim
+    double rockSeconds = 0.0;    // before moving to the next rock
+    std::uint32_t commodity = 0; // what is in the hold
+    float units = 0.0f;          // how much of it
 };
 
 struct Captain
@@ -1526,9 +1669,16 @@ struct Captain
     // and a bad route would drain the player instead of merely underperforming.
     float cut = 0.0f;
 
-    // What you told them, and what they are doing about it (stage B).
+    // What you told them, and what they are doing about it (stage B), plus the
+    // stationary half of the same question (stage C). Exactly one of `haul` and
+    // `mine` is live at a time and `order.kind` says which - they are two jobs,
+    // not two views of one, and a union of them would buy nothing but a way to
+    // read the wrong one.
     CaptainOrder order;
     CaptainHaul haul;
+    CaptainMine mine;
+    // Lifetime, across every order they have ever been given (stage C).
+    CaptainLedger ledger;
 };
 
 // Somebody looking for a berth in the docked station's crew hall.
@@ -1800,6 +1950,10 @@ public:
     // recordless road here — a miner IS its body — so this only ever destroys a
     // ship that is in the sky, through the death path a raider's shot uses.
     bool killMinerPuppet(std::uint32_t market);
+    // The same lever against a captain's body (Phase 39 stage C): kills the
+    // hull wherever it is, through the ordinary death path. False when that
+    // captain has no body in any open bubble.
+    bool killCaptainPuppet(std::size_t captainIndex);
 
     // How many traders have been lost since this session started. A probe, not
     // sim state: it is never saved, and nothing reads it but the console.
@@ -2267,8 +2421,35 @@ public:
     // `market`. ⚑ Refuses while they are already flying one, rather than
     // re-pointing a laden hull at a market it did not buy for.
     bool orderHaul(std::size_t captainIndex, std::uint32_t market, std::string* outError = nullptr);
+
+    // --- Mine here (Phase 39 stage C) --------------------------------------
+    //
+    // ⚑⚑⚑⚑ THE STATIONARY HALF, AND IT NAMES NO PLACE AT ALL - WHICH IS THE
+    // SHAPE THE SPLIT PRODUCES RATHER THAN A SIMPLIFICATION. A haul is told two
+    // markets because a haul is a line between two of them. "Mine here" is told
+    // nothing: `here` is the dock you are standing on, the ground is that
+    // system's rock, and the ore comes back to this same counter. One system,
+    // one bubble, one market - and it is the same sentence `orderHaul` opens
+    // with ("a route starts where the hull is") with the far end deleted.
+    //
+    // Refuses, each with a reason the player can act on: not docked, no such
+    // captain, no ship, their ship is not on this dock, they are already on a
+    // haul, this system has no rock, or their hull carries no mining beam. The
+    // last one is the only NEW kind of refusal in the phase and it is a real
+    // instruction: a mining captain flies the fit you gave them, so the laser
+    // is something you buy at a shipyard and bolt on before you post them.
+    bool orderMine(std::size_t captainIndex, std::string* outError = nullptr);
+
+    // Units of ore a hull cuts per second, summed over every fitted beam that
+    // has any. ⚑ ONE DEFINITION, TWO READERS: `orderMine` refuses on it and the
+    // mining tick runs at it, so the ship the order accepted is the ship that
+    // works. Zero means the hull cannot mine at all.
+    [[nodiscard]] float shipMiningPower(const OwnedShip& ship) const;
+
     // Stands the order down. Immediate when they are parked; at the end of the
-    // current leg when they are not - see `CaptainOrder::stopping`.
+    // current leg for a haul, and at the next delivery for a mining order - see
+    // `CaptainOrder::stopping`, which is a HAZARD for one of those and plain
+    // courtesy for the other.
     bool cancelOrder(std::size_t captainIndex, std::string* outError = nullptr);
 
     // ⚑⚑⚑⚑ WHERE A CAPTAIN IS, THROUGH THE SAME DECOMPOSITION THE COARSE FLEET
@@ -2279,7 +2460,10 @@ public:
     [[nodiscard]] sol::sim::TraderRoute captainRoute(std::size_t captainIndex) const;
 
     // Which system a captain's hull is in, or `kNoIndex` between gates and for
-    // one with no ship. Parked counts: the hull is at a station somewhere.
+    // one with no ship. Parked counts: the hull is at a station somewhere, and
+    // so does posted - a captain working a field is in the system they were
+    // posted to for as long as the order stands, which is what makes
+    // `bubbleHoldsPlayerAsset` answerable from the record alone.
     [[nodiscard]] std::uint32_t captainSystem(std::size_t captainIndex) const;
 
     // --- Factions & reputation (Phase 8b) ---
@@ -2889,6 +3073,13 @@ public:
 
     [[nodiscard]] std::size_t instantiatedSystemCount() const { return m_bubbles.size(); }
 
+    // ⚑ PUBLIC SINCE PHASE 39 STAGE C, and it is the probe the stage's exit is
+    // written in terms of: "come back and find the same hull at the same rock -
+    // with the console reporting it was TICKED, not restored". Whether a system
+    // is still open is the first half of that sentence, and it was a private
+    // helper of the captain tick.
+    [[nodiscard]] bool systemIsInstantiated(std::uint32_t system) const;
+
     // ⚑⚑⚑⚑ THE HARD CAP, AND IT IS PUBLIC BECAUSE THE SPEC ASKS FOR IT TO BE
     // ASSERTED BY A TEST RATHER THAN CLAIMED BY A COMMENT (Phase 38 stage C,
     // in those words). `sim::resolveCollisions` is O(n^2) with no broadphase
@@ -2924,7 +3115,13 @@ public:
     // and all, rather than built a second time on top of itself - the bug the
     // plural registry actually caused in stage A, said once so it cannot
     // happen again through this door.
-    bool instantiateSystem(std::uint32_t system);
+    // ⚑⚑⚑ `overCap` IS THE CAPTAIN TICK'S DOOR AND NOBODY ELSE'S (Phase 39
+    // stage C). A stationary order holds a bubble open for as long as it
+    // stands, so a captain posted to a seventh system must get one - the
+    // alternative is this returning false and the player's hull never being
+    // simulated with nothing said about it. See `enforceBubbleCap` for why
+    // the cap is soft in exactly this one direction.
+    bool instantiateSystem(std::uint32_t system, bool overCap = false);
 
     [[nodiscard]] std::uint32_t instantiatedSystemAt(std::size_t slot) const
     {
@@ -4109,11 +4306,26 @@ private:
     // the entire retention policy, and it is ONE function on purpose: 015's
     // "the player's system, plus every system holding a player asset" is the
     // policy this stage's interface was written to accept unchanged, and
-    // Phase 39 turns it on by adding a second clause HERE and nothing else
-    // anywhere. It returns seconds rather than a bool for the same reason — a
-    // parked asset is not held for two minutes, it is held while it is parked,
-    // and a predicate could not say so.
+    // Phase 39 turns it on by adding a second clause HERE.
+    //
+    // ⚑⚑⚑ "AND NOTHING ELSE ANYWHERE" WAS THE HALF THAT DID NOT SURVIVE
+    // CONTACT, AND PHASE 39's OWN SPEC IS WHERE IT WAS CAUGHT rather than the
+    // code. Three functions moved, not one: this one, `releaseCooledBubbles`
+    // (which never consulted this at all - it counts a clock down, so an
+    // indefinite hold cannot be a large number here) and `enforceBubbleCap`
+    // (whose safety argument stops being true the moment a bubble holds
+    // something the player owns). What DID hold is the interface: the
+    // predicate went in as one clause, and the shape of this function did not
+    // have to change to take it.
     [[nodiscard]] double bubbleRetentionSeconds(const SystemBubble& bubble) const;
+
+    // ⚑⚑⚑⚑ THE SECOND SET OF `decisions/015`, WHICH WAS EMPTY UNTIL PHASE 39
+    // STAGE C. True when a captain of the player's is working this system under
+    // a STATIONARY order. Asked of `m_captains` and never of the bubble's own
+    // entities: a body exists because the bubble is held, so holding the bubble
+    // because the body exists would be a circle that releases a system out from
+    // under the hull standing in it on any tick the body is between rebuilds.
+    [[nodiscard]] bool bubbleHoldsPlayerAsset(const SystemBubble& bubble) const;
 
     // Is a fight going on in this bubble right now: anyone in `Attack`, anyone
     // shot inside the last `kThreatMemorySeconds`, or a bolt still in the air.
@@ -4610,7 +4822,65 @@ private:
     // rolling a coarse loss against it as well is exactly the "a captain is
     // both things at once" defect the phase's risk register names.
     void rollCaptainAttrition(std::size_t captainIndex, double dt);
-    [[nodiscard]] bool systemIsInstantiated(std::uint32_t system) const;
+
+    // --- The stationary half (Phase 39 stage C) ----------------------------
+    //
+    // ⚑⚑⚑⚑ THIS ONE IS NOT A PUPPET AND THE NAME SAYS SO. `syncCaptainPuppets`
+    // reconciles a BODY with a record that is flying without it; there is no
+    // record here to reconcile against, because the bubble is held open for as
+    // long as the order stands and the hull in it IS the job. So this ticks the
+    // work rather than syncing a view of it: choose a rock, hold off it, cut,
+    // take the load in when it is full. `CaptainMine` is what survives a save,
+    // and it holds a FIELD rather than a rock for that reason.
+    void tickMiningCaptains(SystemBubble& bubble, double dt);
+    // Ensures every captain under a stationary order has their system open,
+    // over the cap if it comes to that (the user's ruling 11). ⚑ Called from
+    // `tickCaptains` rather than from the bubble loop, because a bubble that
+    // does not exist yet cannot be iterated to.
+    void openStationaryCaptainBubbles();
+    // Moves a stationary captain's hull along its crossing at the coarse
+    // fleet's own in-system speed, and lets go near the end so the arrival is
+    // flown. Returns true when it wrote the position - which is the same
+    // contract `keepTraderOnSchedule` has, against a body that IS the record
+    // rather than a view of one.
+    // `arrival` is how near the waypoint the pace puts the hull down, and it
+    // differs by leg rather than being one number: a rock is arrived AT
+    // (`kTraderArrivalRange`, because the last kilometre into a field is what
+    // kills a hull), a station is arrived NEAR.
+    bool cruiseCaptainToward(sol::ecs::Registry& registry,
+                             sol::ecs::Entity entity,
+                             const sol::core::DVec3& waypoint,
+                             double arrival,
+                             double dt) const;
+    // Sells a mined hold into the market the order named and books it exactly
+    // as `settleCaptainSale` books a haul. ⚑⚑ THE CUT NEEDED NO SPECIAL CASE
+    // FOR MINING AND THAT IS WORTH SAYING: ruling 6 takes a cut of the PROFIT,
+    // and ore out of the ground cost nothing, so the profit IS the sale and the
+    // same arithmetic answers both.
+    void settleCaptainMineSale(Captain& captain);
+    // The rock a mining captain should be on, chosen out of its own bubble.
+    // Same two rules `chooseMinerRock` follows and for the same reasons -
+    // nearest, and only if the straight line to it misses every other rock -
+    // reached through the same helper rather than through a copy of it.
+    // Which ore a captain should be filling the hold with, out of what this
+    // system's fields actually hold and what the dock they sell at will pay
+    // for a full load of it. `kNoIndex` when there is no rock at all.
+    //
+    // ⚑⚑⚑ THIS IS WHERE "AN ORDER NAMES TWO PLACES AND NEVER A CARGO" LANDS
+    // FOR THE STATIONARY HALF (stage B's rule, inherited). What to carry is
+    // the captain's judgement, and that is what the cut is paying for - so a
+    // mining order names a system and a counter, and the person decides which
+    // of the two ores under them is worth cutting. Quoted at a FULL LOAD
+    // rather than per unit, which is stage B's own finding restated: the
+    // price a hold fetches is not the price one unit fetches, and choosing on
+    // the marginal price is choosing on a lie.
+    [[nodiscard]] std::uint32_t
+    chooseCaptainOre(const sol::ecs::Registry& registry, std::uint32_t market, float load) const;
+    [[nodiscard]] bool chooseCaptainRock(const sol::ecs::Registry& registry,
+                                         const Captain& captain,
+                                         CaptainPuppet& puppet,
+                                         const sol::core::DVec3& from,
+                                         bool sameField) const;
     // Reconciles miner bodies with the extractor stations here (Phase 8x stage
     // 6): a ship at the rock for every outpost in this system that is actually
     // drawing, and none for one that has stopped — because its warehouse is

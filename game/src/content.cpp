@@ -1761,6 +1761,39 @@ std::string listCaptains(GameContent& content)
             lines += "\n   no orders";
             continue;
         }
+        // ⚑⚑ THE STATIONARY HALF READS ITSELF OUT, AND IT REPORTS THE THING
+        // THE STAGE'S EXIT ASKS ABOUT: "come back and find the same hull at the
+        // same rock with a fuller hold - with the console reporting it was
+        // TICKED, not restored". `rockStep` is that number. It counts the rocks
+        // moved to over the life of the order and nothing resets it, so a probe
+        // taken before a jump and again after tells a system that went on
+        // working from one that was rebuilt around a captain who had been
+        // asleep - which no state word could, because "at the rock" reads the
+        // same either way. Stage A's rule, and Phase 38's silent audio is why it
+        // is a rule: prefer a COUNT over a state, because a count that fails to
+        // move is evidence.
+        if (captain.order.kind == game::OrderKind::Mine) {
+            std::snprintf(buffer,
+                          sizeof(buffer),
+                          "\n   mining, selling at %s%s\n   %s, %.0f %s aboard, %u rock(s) worked",
+                          marketName(world, captain.order.marketA).c_str(),
+                          captain.order.stopping ? " (standing down after this load)" : "",
+                          captain.mine.phase == game::MinePhase::Selling ? "taking a load in" : "at the rock",
+                          static_cast<double>(captain.mine.units),
+                          captain.mine.commodity < world.commodityIds().size()
+                              ? world.commodityIds()[captain.mine.commodity].c_str()
+                              : "ore",
+                          captain.mine.rockStep);
+            lines += buffer;
+            std::snprintf(buffer,
+                          sizeof(buffer),
+                          "\n   %.0f cr earned, %.0f cr paid out, %u load(s) lost",
+                          captain.ledger.earned,
+                          captain.ledger.paid,
+                          captain.ledger.losses);
+            lines += buffer;
+            continue;
+        }
         // The ORDER, then what they are doing about it - the two records the
         // stage keeps apart, kept apart in the readout as well.
         lines += "\n   hauling " + marketName(world, captain.order.marketA) + " <-> " +
@@ -1790,9 +1823,9 @@ std::string listCaptains(GameContent& content)
         std::snprintf(buffer,
                       sizeof(buffer),
                       "\n   %.0f cr earned, %.0f cr paid out, %u haul(s) lost",
-                      captain.haul.earned,
-                      captain.haul.paid,
-                      captain.haul.losses);
+                      captain.ledger.earned,
+                      captain.ledger.paid,
+                      captain.ledger.losses);
         lines += buffer;
     }
     return lines;
@@ -1833,6 +1866,24 @@ bool orderHaul(GameContent& content, double captain, double destination)
         return false;
     }
     return content.world().orderHaul(static_cast<std::size_t>(captain) - 1, places[slot].market);
+}
+
+// ⚑ NO SECOND ARGUMENT, AND THAT IS THE ORDER'S OWN SHAPE RATHER THAN A
+// SHORTCUT. "Mine here" names no place: the rock is this system's and the ore
+// comes back to the dock you are standing on, so there is nothing to number and
+// no `sol.mine_destinations` to print. The binding checks arity exactly (Phase
+// 33's rule), so a verb that took an ignored argument would be a lie the console
+// enforces.
+// Kills a captain's hull where it stands, so the consequence can be caused
+// rather than waited for. `sol.miner_kill`'s sibling.
+bool captainKill(GameContent& content, double captain)
+{
+    return captain >= 1.0 && content.world().killCaptainPuppet(static_cast<std::size_t>(captain) - 1);
+}
+
+bool orderMine(GameContent& content, double captain)
+{
+    return captain >= 1.0 && content.world().orderMine(static_cast<std::size_t>(captain) - 1);
 }
 
 bool cancelOrder(GameContent& content, double captain)
@@ -4423,6 +4474,8 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&recallCaptain>("sol", "recall_captain", this);
     m_vm.registerFunction<&listHaulDestinations>("sol", "haul_destinations", this);
     m_vm.registerFunction<&orderHaul>("sol", "order_haul", this);
+    m_vm.registerFunction<&orderMine>("sol", "order_mine", this);
+    m_vm.registerFunction<&captainKill>("sol", "captain_kill", this);
     m_vm.registerFunction<&cancelOrder>("sol", "cancel_order", this);
     m_vm.registerFunction<&listCaptainShips>("sol", "captain_ships", this);
     m_vm.registerFunction<&insuranceQuote>("sol", "insurance_quote", this);

@@ -224,3 +224,48 @@ convenience and becomes the instrument for a measured problem: a captain
 committed at departure and settling ~200 seconds later loses about 17% when the
 far market moves against them, and a floor is what lets the player refuse that
 trade rather than watch it.
+
+## Amendment 3 (2026-09-03, Phase 39 stage C) — what the stationary half proved about section 2
+
+Section 2 says a captain's ship exists two ways and the **order** decides which.
+Shipping the stationary half leaves that decision intact and sharpens two things
+about it.
+
+**A stationary order has ONE representation, not a preferred one.** `CaptainMine`
+mirrors no `sim::` type, and that is the point rather than an omission: because
+the bubble is held open for as long as the order stands, the hull in the sky
+**is** the record. There is no second clock to keep in step, so the
+control-world guard the itinerant half needs has no stationary counterpart to
+write — and `CaptainHaul`'s reason for holding an `EconomyTrader` field for
+field (*"the two would slowly stop meaning the same thing"*) simply does not
+arise.
+
+**But the coarse fleet's arithmetic is still needed, for one thing, and that is
+not a violation of the split.** An asteroid field sits 8e7–4e8 m from the
+barycentre and so does the dock a captain sells at, so the run between them is a
+crossing of a playfield that a 120 m/s hull takes days over. `keepTraderOnSchedule`
+exists for exactly that — *"the record moves it faster than any hull flies"* —
+so a stationary captain's crossing is paced at
+`MiningParams::fieldMaxDistance / EconomyParams::traderLegSeconds`, borrowed from
+the constant whose own comment reads *"in-system travel per endpoint"*. ⚑ **The
+split is about where the RECORD lives, not about who may use the coarse layer's
+numbers.**
+
+⚑⚑ **And section 4's ruling needed no special case for mining, which is worth
+recording because it could easily have.** *"A cut of the PROFIT, never of the
+sale"* was written against a haul, where the hold's cost must come off first or a
+thin margin pays the captain more than the run made. Ore out of the ground cost
+nothing, so the basis is zero and the profit **is** the gross — the same sentence
+evaluated against a different outlay gives a mining captain a straight share of
+what the ore fetched. What did have to move is the **ledger**: `earned`, `paid`
+and `losses` came out of `CaptainHaul` onto the `Captain`, because a person who
+hauls, stands down and is then sent to a rock is one person with one record of
+what they have made.
+
+⚑ **A practical consequence nobody predicted, and it is about content rather than
+code.** `assignCaptain` refuses the ship the player is currently flying and a
+pilot has one body, so a spare hull cannot be ferried to a station that does not
+sell hulls — you would be stranded in it. **A captain can therefore only be given
+a hull at a shipyard**, which makes "post a miner" a question about where the
+ship counters are: 78 of 81 systems have rock, 29 of those also have a crew hall,
+and exactly **one** has rock and a dock that sells hulls.
