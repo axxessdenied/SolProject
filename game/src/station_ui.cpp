@@ -97,6 +97,7 @@ void fillStationOutfitting(const SpaceWorld& world,
                            std::vector<ui::CaptainRow>& captainRows,
                            std::vector<ui::CaptainRow>& captainHireRows,
                            std::vector<ui::CaptainRow>& haulRows,
+                           std::vector<ui::CaptainRow>& fleetOptionRows,
                            std::vector<ui::FactionRow>& factionRows)
 {
     text.clear();
@@ -112,6 +113,7 @@ void fillStationOutfitting(const SpaceWorld& world,
     captainRows.clear();
     captainHireRows.clear();
     haulRows.clear();
+    fleetOptionRows.clear();
     factionRows.clear();
 
     const OwnedShip& active = world.activeShip();
@@ -342,7 +344,32 @@ void fillStationOutfitting(const SpaceWorld& world,
     // ⚑⚑ THE DETAIL LINE NAMES THE HULL AND THE SYSTEM, not just "assigned".
     // A captain the player cannot find is the failure this stage can produce,
     // and the fleet list is on a different tab.
+    //
+    // ⚑⚑⚑⚑ GROUPED BY FLEET SINCE PHASE 40 STAGE A, WHICH IS WHY THE ROW
+    // CARRIES ITS OWN INDEX. A commander is emitted with the people who answer
+    // to them immediately underneath, so a three-role fleet reads as one thing
+    // rather than as three unrelated rows spread through the roster. The order
+    // of `m_captains` is untouched - this is a view, and the world goes on
+    // being the flat list every test and `sol.captains()` read.
+    std::vector<std::size_t> order;
+    order.reserve(world.captains().size());
+    std::vector<std::size_t> members;
     for (std::size_t i = 0; i < world.captains().size(); ++i) {
+        // Subordinates are emitted by their commander, below. A captain whose
+        // commander is not on the roster cannot happen - the loader refuses it
+        // and `releaseSubordinatesOf` prevents it - but emitting by COMMANDER
+        // rather than by subordinate means such a person would simply vanish
+        // off the tab, so the fallback is to treat them as their own row.
+        if (world.captainCommanderIndex(i) < world.captains().size()) {
+            continue;
+        }
+        order.push_back(i);
+        world.captainSubordinates(i, members);
+        for (const std::size_t member : members) {
+            order.push_back(member);
+        }
+    }
+    for (const std::size_t i : order) {
         const game::Captain& captain = world.captains()[i];
         std::string detail = captain.trade + ", " + formatNumber(captain.cut * 100.0f) + "% of takings";
         if (captain.ship < world.fleet().size()) {
@@ -364,10 +391,23 @@ void fillStationOutfitting(const SpaceWorld& world,
         } else {
             detail += " - no ship";
         }
-        captainRows.push_back({.name = captain.name.c_str(),
+        // ⚑⚑ THE NAME CARRIES THE INDENT AND THE DETAIL CARRIES THE RELATION,
+        // and the split is deliberate: the indent is what makes the group
+        // readable at a glance, and the words are what survive a screenshot
+        // being described to somebody. ⚑ A commander is NOT labelled here -
+        // "commands N" would be a fifth thing in a cell that has already
+        // clipped five times this arc, and the rows underneath say it.
+        const std::size_t boss = world.captainCommanderIndex(i);
+        std::string name = captain.name;
+        if (boss < world.captains().size()) {
+            name = "- " + name;
+            detail = "under " + world.captains()[boss].name + " - " + detail;
+        }
+        captainRows.push_back({.name = store(text, name),
                                .detail = store(text, detail),
                                .assigned = captain.ship < world.fleet().size(),
-                               .selected = static_cast<int>(i) == panel.selectedCaptain});
+                               .selected = static_cast<int>(i) == panel.selectedCaptain,
+                               .index = static_cast<int>(i)});
     }
     std::vector<game::CaptainCandidate> hall;
     world.captainCandidates(hall);
@@ -700,6 +740,65 @@ void fillStationOutfitting(const SpaceWorld& world,
     }
     panel.factionNotes = store(text, std::move(notes));
 
+    // ⚑⚑⚑⚑ THE FLEET SECTION (Phase 40 stage A). Three questions, one list,
+    // and which one is being answered is decided HERE rather than on the
+    // screen - see `StationPanel::fleetOptions`. Every branch below asks the
+    // same fields `setCaptainCommander` refuses on, which is this file's
+    // standing bargain: a screen that re-derives a rule is a screen that
+    // eventually disagrees with the world about it, and the Crew tab has
+    // already been the half that was right once this arc.
+    if (panel.selectedCaptain >= 0 &&
+        static_cast<std::size_t>(panel.selectedCaptain) < world.captains().size()) {
+        const auto self = static_cast<std::size_t>(panel.selectedCaptain);
+        const std::size_t boss = world.captainCommanderIndex(self);
+        std::vector<std::size_t> mine;
+        world.captainSubordinates(self, mine);
+        const auto rowFor = [&](std::size_t who, std::string detail) {
+            const game::Captain& person = world.captains()[who];
+            fleetOptionRows.push_back({.name = person.name.c_str(),
+                                       .detail = store(text, std::move(detail)),
+                                       .index = static_cast<int>(who)});
+        };
+        if (boss < world.captains().size()) {
+            // ⚑⚑⚑⚑ THE ROW IS THE CAPTAIN BEING RELEASED, NOT THE COMMANDER
+            // THEY ARE LEAVING - and the first cut had it the other way, which
+            // would have sent `LeaveFleet` the boss's index and released
+            // nobody. The invariant that catches it is worth stating: A FLEET
+            // ROW ALWAYS DRAWS THE CAPTAIN ITS INDEX NAMES. "Under" points at a
+            // commander and the action carries the selection; "Leave" and
+            // "Free" point at the person leaving. A row whose name said one
+            // person while its index meant another is the exact class of defect
+            // the roster's own `index` field exists to prevent, and it very
+            // nearly arrived through the door that was built to stop it.
+            panel.fleetVerb = "Leave";
+            rowFor(self, std::string("answers to ") + world.captains()[boss].name);
+        } else if (!mine.empty()) {
+            panel.fleetVerb = "Free";
+            for (const std::size_t member : mine) {
+                rowFor(member, std::string("answers to ") + world.captains()[self].name);
+            }
+        } else {
+            panel.fleetVerb = "Under";
+            for (std::size_t i = 0; i < world.captains().size(); ++i) {
+                // The one-level rule, asked the way the world asks it: somebody
+                // who already answers to another captain cannot take people on.
+                if (i == self || world.captains()[i].commander != game::kNoCommander) {
+                    continue;
+                }
+                std::vector<std::size_t> theirs;
+                world.captainSubordinates(i, theirs);
+                rowFor(i,
+                       theirs.empty() ? std::string("commands nobody yet")
+                                      : std::to_string(theirs.size()) + " under them");
+            }
+            if (fleetOptionRows.empty()) {
+                panel.fleetNote = "(nobody else here could take them on)";
+            }
+        }
+    } else {
+        panel.fleetNote = "(select a captain above)";
+    }
+
     panel.mounts = mountRows;
     panel.components = componentRows;
     panel.blackMarketCatalog = blackMarketRows;
@@ -716,6 +815,7 @@ void fillStationOutfitting(const SpaceWorld& world,
     panel.captains = captainRows;
     panel.captainHires = captainHireRows;
     panel.haulDestinations = haulRows;
+    panel.fleetOptions = fleetOptionRows;
     panel.factions = factionRows;
 }
 
@@ -1119,6 +1219,23 @@ void executeStationAction(SpaceWorld& world, const ui::StationAction& action, in
         break;
     case Kind::RecallCaptain:
         (void)world.recallCaptain(static_cast<std::size_t>(action.index));
+        break;
+    case Kind::SetCommander:
+        // ⚑ THE ROW IS THE COMMANDER AND THE SELECTION IS THE SUBORDINATE,
+        // which is `AssignCaptain`'s argument order pointed at a person instead
+        // of a hull. The selection survives, for that action's reason: forming
+        // a fleet is one of several things the player is doing to the captain
+        // they are holding, and dropping the aim in the middle means finding
+        // them in the list again.
+        if (selectedCaptain >= 0) {
+            (void)world.setCaptainCommander(static_cast<std::size_t>(selectedCaptain),
+                                            static_cast<std::size_t>(action.index));
+        }
+        break;
+    case Kind::LeaveFleet:
+        // Carries its own subject, because "Leave" on a commander's row and
+        // "Free" on a member's row are the same act said from the two ends.
+        (void)world.clearCaptainCommander(static_cast<std::size_t>(action.index));
         break;
     case Kind::OrderHaul:
         // The row index becomes a market HERE and nowhere else, which is the

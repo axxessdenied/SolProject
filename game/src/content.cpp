@@ -1745,7 +1745,29 @@ std::string listCaptains(GameContent& content)
     for (std::size_t i = 0; i < world.captains().size(); ++i) {
         const game::Captain& captain = world.captains()[i];
         lines += "\n" + std::to_string(i + 1) + ": " + captain.name + " (" + captain.trade + "), " +
-                 std::to_string(static_cast<int>(captain.cut * 100.0f + 0.5f)) + "% of takings - ";
+                 std::to_string(static_cast<int>(captain.cut * 100.0f + 0.5f)) + "% of takings";
+        // ⚑⚑⚑ THE FLEET RELATION, ON THE FIRST LINE AND BEFORE ANY `continue`
+        // (Phase 40 stage A). It goes here rather than beside the order for two
+        // reasons. A captain with no ship takes the early exit below, and a
+        // fleet is a fact about the PERSON - so a marker hung off the order
+        // would be invisible for exactly the captain the player is in the
+        // middle of organising. And Phase 39's exit is the precedent: the Crew
+        // tab printed no money at all for a patrol because the ledger sat under
+        // a guard that a patrol never satisfied.
+        //
+        // ⚑ Short on purpose. This probe's output goes through a 1024-char log
+        // line and a three-captain dump already truncates; "under Ines Farrow"
+        // is the whole of what a reader needs to reconstruct the tree.
+        if (const std::size_t boss = world.captainCommanderIndex(i); boss < world.captains().size()) {
+            lines += " [under " + world.captains()[boss].name + "]";
+        } else {
+            std::vector<std::size_t> mine;
+            world.captainSubordinates(i, mine);
+            if (!mine.empty()) {
+                lines += " [commands " + std::to_string(mine.size()) + "]";
+            }
+        }
+        lines += " - ";
         if (captain.ship >= world.fleet().size()) {
             lines += "no ship";
             continue;
@@ -2061,6 +2083,21 @@ bool assignCaptain(GameContent& content, double captain, double fleetSlot)
 bool recallCaptain(GameContent& content, double captain)
 {
     return captain >= 1.0 && content.world().recallCaptain(static_cast<std::size_t>(captain) - 1);
+}
+
+// Fleets (Phase 40 stage A). One-based like every captain verb beside them,
+// because the numbers a player types come off `sol.captains()`, which prints
+// one-based rows.
+bool commandCaptain(GameContent& content, double captain, double commander)
+{
+    return captain >= 1.0 && commander >= 1.0 &&
+           content.world().setCaptainCommander(static_cast<std::size_t>(captain) - 1,
+                                               static_cast<std::size_t>(commander) - 1);
+}
+
+bool freeCaptain(GameContent& content, double captain)
+{
+    return captain >= 1.0 && content.world().clearCaptainCommander(static_cast<std::size_t>(captain) - 1);
 }
 
 // ⚑ ONE VERB PAIR, because after Phase 31 stage B there is one thing to do:
@@ -4591,6 +4628,8 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&dismissCaptain>("sol", "dismiss_captain", this);
     m_vm.registerFunction<&assignCaptain>("sol", "assign_captain", this);
     m_vm.registerFunction<&recallCaptain>("sol", "recall_captain", this);
+    m_vm.registerFunction<&commandCaptain>("sol", "command_captain", this);
+    m_vm.registerFunction<&freeCaptain>("sol", "free_captain", this);
     m_vm.registerFunction<&listHaulDestinations>("sol", "haul_destinations", this);
     m_vm.registerFunction<&orderHaul>("sol", "order_haul", this);
     m_vm.registerFunction<&sellFloor>("sol", "sell_floor", this);

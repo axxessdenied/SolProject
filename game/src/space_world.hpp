@@ -1813,6 +1813,18 @@ struct CaptainMine
     double stalledSeconds = 0.0;
 };
 
+// ⚑⚑⚑⚑ "NOBODY COMMANDS THIS ONE", AND IT IS PROVABLY NOT A PERSON RATHER THAN
+// MERELY UNLIKELY TO BE (Phase 40 stage A). `Captain::commander` holds another
+// captain's `who`, and every `who` a captain can ever have comes from
+// `castKeyForCharacter`, whose own comment says it is *"masked to 63 bits so a
+// person's key can never collide with `kSeatKey`'s space"*. So a value with bit
+// 63 set is not a character key by construction, and this is the whole of that
+// bit set. ⚑ The alternative was zero, which is `Captain::who`'s default and
+// therefore reads as "unset" - but "unset" and "provably not a key" are
+// different claims, and only the second one survives somebody hashing an id
+// that happens to come out zero.
+inline constexpr std::uint64_t kNoCommander = ~0ull;
+
 struct Captain
 {
     std::string name;  // copied in; lives in no def
@@ -1840,6 +1852,30 @@ struct Captain
     // toll: on a thin margin a cut of the gross takes more than the run made,
     // and a bad route would drain the player instead of merely underperforming.
     float cut = 0.0f;
+
+    // ⚑⚑⚑⚑ WHO THEY ANSWER TO (Phase 40 stage A), AS A `who` RATHER THAN AS AN
+    // INDEX. `m_captains` is erased from the middle by both `dismissCaptain` and
+    // `killCaptain`, and `removeCaptain`'s own comment is the warning: *"an
+    // erase renumbers the tail; without this a captain silently inherits the
+    // hull that moved into the slot"*. A commander stored as an index is that
+    // hazard with a person on the end of it - dismiss somebody above them in
+    // the list and a captain silently starts answering to a stranger. A `who`
+    // is the key `m_lostCaptains` already stores for exactly this reason: it
+    // survives an erase because it names the person rather than the slot.
+    //
+    // ⚑⚑⚑ ONE DIRECTION ONLY, WHICH IS `Captain::ship`'s RULE ONE RELATION
+    // ALONG. A commander keeps no member list: two sides of one relationship
+    // are two truths that can disagree, and the roster is small enough that
+    // finding a commander's people is a search - `captainOf()`'s own bargain,
+    // stated in this file four fields up.
+    //
+    // ⚑⚑ AND A FLEET IS EXACTLY ONE LEVEL DEEP, ENFORCED RATHER THAN ASSUMED.
+    // A captain who answers to somebody cannot themselves be answered to, which
+    // makes a cycle unrepresentable instead of merely refused: with depth
+    // capped at one there is no chain long enough to close. `setCaptainCommander`
+    // is where that is checked and the loader re-checks it, because a state the
+    // game cannot PRODUCE is a state it will not ACCEPT.
+    std::uint64_t commander = kNoCommander;
 
     // What you told them, and what they are doing about it (stage B), plus the
     // stationary half of the same question (stage C). Exactly one of `haul` and
@@ -2151,6 +2187,16 @@ public:
     // Strike a captain off, renumbering every index that pointed past them -
     // the two parallel vectors AND the `CaptainPuppet` in every open bubble.
     void removeCaptain(std::size_t captainIndex);
+    // ⚑⚑⚑ A FLEET DISSOLVES WHEN ITS COMMANDER GOES, AND IT SAYS SO (Phase 40
+    // stage A). Called before BOTH erases - the dismissal and the death - so
+    // the two agree, which they must: `killCaptain` cannot refuse, so a rule
+    // that only dismissal enforced would leave the dead commanding people. ⚑ It
+    // is a release rather than a refusal because nothing is lost by it. A
+    // dismissal is refused while a captain holds a SHIP because the hull is
+    // somewhere else flying a route; a subordinate is not somewhere else, they
+    // are a person who now answers to nobody, which is a state they were in
+    // yesterday.
+    void releaseSubordinatesOf(std::size_t captainIndex);
     // Delete a hull from the fleet, renumbering `m_activeShip` and every
     // `Captain::ship` past it. `sellShip`'s tail, with a second caller since
     // stage D.
@@ -2587,6 +2633,37 @@ public:
     bool dismissCaptain(std::size_t captainIndex, std::string* outError = nullptr);
     bool assignCaptain(std::size_t captainIndex, std::size_t fleetIndex, std::string* outError = nullptr);
     bool recallCaptain(std::size_t captainIndex, std::string* outError = nullptr);
+
+    // --- Fleets (Phase 40 stage A) -----------------------------------------
+    //
+    // ⚑⚑⚑ A FLEET IS A COMMANDER AND THE PEOPLE WHO ANSWER TO THEM, AND IT IS
+    // STORED ON THE SUBORDINATE (the user's ruling 2). There is no `Fleet`
+    // object and no member list: `Captain::commander` is the whole of the
+    // relation, which keeps `m_captains` the flat vector every test, the Crew
+    // tab and `sol.captains()` already read, and keeps Phase 39's five stages
+    // working underneath this one unchanged.
+
+    // Put `captainIndex` under `commanderIndex`. Refuses self-command, a
+    // commander who already answers to somebody, and a captain who commands
+    // anybody - one level, checked here.
+    bool setCaptainCommander(std::size_t captainIndex,
+                             std::size_t commanderIndex,
+                             std::string* outError = nullptr);
+    // Take them out of whatever fleet they are in. Refuses somebody who is not
+    // in one, so a UI that offers it wrongly says so rather than doing nothing.
+    bool clearCaptainCommander(std::size_t captainIndex, std::string* outError = nullptr);
+
+    // Which captain holds this `who`, or `m_captains.size()` for nobody. The
+    // one place a stored key becomes an index, so the search lives here rather
+    // than at each of its callers.
+    [[nodiscard]] std::size_t captainIndexOfWho(std::uint64_t who) const;
+    // Who this captain answers to, or `m_captains.size()` for nobody.
+    [[nodiscard]] std::size_t captainCommanderIndex(std::size_t captainIndex) const;
+    // Everybody who answers to this captain, as indices, in roster order.
+    void captainSubordinates(std::size_t captainIndex, std::vector<std::size_t>& out) const;
+    // Whether this captain is in a fleet at all - as its commander or under
+    // one. Asked by the Crew tab to decide whether a row belongs to a group.
+    [[nodiscard]] bool captainInFleet(std::size_t captainIndex) const;
 
     // --- Standing orders (Phase 39 stage B) --------------------------------
     //

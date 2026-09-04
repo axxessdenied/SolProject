@@ -452,6 +452,18 @@ struct CaptainRow
     const char* detail = ""; // trade, ship and cut - prebuilt
     bool assigned = false;   // holds a hull: cannot be dismissed
     bool selected = false;
+    // ⚑⚑⚑⚑ WHICH CAPTAIN THIS ROW IS, AND IT EXISTS BECAUSE PHASE 40 STAGE A
+    // REORDERS THE LIST. Until fleets, a row's POSITION was the captain's index
+    // in the world, and `SelectCaptain`/`DismissCaptain` carried that position
+    // straight through to `world.captains()[i]`. Grouping a fleet under its
+    // commander breaks that silently - the list still has the right people in
+    // it, every button still works, and each one aims at somebody else.
+    //
+    // ⚑⚑ -1 MEANS "POSITION IS THE ANSWER", which is what the two lists that
+    // are not the roster want: the crew hall's candidates are indexed by their
+    // slot in the hall, and `haulDestinations` by its own row. So the fill sets
+    // this only where it is reordering, and `captainList` falls back to `i`.
+    int index = -1;
 };
 
 // One faction's standing line for the Factions tab (Phase 8b).
@@ -830,6 +842,16 @@ struct StationAction
         // because the stage's exit changes the floor on a run already in
         // flight, which an argument to the verb that CREATES the run cannot do.
         SetSellFloor,
+        // Fleets (Phase 40 stage A). ⚑⚑ `SetCommander` CARRIES THE COMMANDER
+        // AND THE SELECTION IS THE SUBORDINATE, which is `AssignCaptain`'s
+        // shape exactly: the row the player pressed names the thing being
+        // pointed AT, and who is being pointed is whoever they had aimed.
+        SetCommander, // index = the employed captain who will command
+        // ⚑ AND THIS ONE CARRIES ITS SUBJECT, because two buttons produce it -
+        // "Leave" on the commander's row and "Free" on a member's - and they
+        // are the same act said from the two ends. One verb, one meaning: take
+        // THIS captain out of whatever fleet they are in.
+        LeaveFleet, // index = the employed captain to release
     };
     Kind kind = Kind::None;
     const char* id = "";    // def id (component/weapon/ship/crew actions)
@@ -926,6 +948,24 @@ struct StationPanel
     // Same argument as `selectedMount` above - the screen owns it because it is
     // a thing the player is holding rather than a thing the world knows.
     int selectedCaptain = -1;
+    // ⚑⚑⚑⚑ THE FLEET SECTION (Phase 40 stage A), AND IT IS ONE LIST ANSWERING
+    // THREE DIFFERENT QUESTIONS ABOUT THE SELECTED CAPTAIN. Which question is
+    // decided in the FILL, because all three depend on rules the world would
+    // refuse on - and this file's own history is that a screen re-deriving such
+    // a rule ends up disagreeing with the world about it. `fleetVerb` is the
+    // button's label, so the section draws what it is told:
+    //
+    //   they answer to somebody  -> one row, their commander, "Leave"
+    //   they command people      -> a row per subordinate,    "Free"
+    //   neither                  -> a row per possible boss,  "Under"
+    //
+    // Empty means there is nothing to offer, and `fleetNote` says why in words
+    // rather than leaving an empty box - the mining order's pattern from stage
+    // C, for the same reason: every refusal here is something the player can do
+    // something about.
+    std::span<const CaptainRow> fleetOptions;
+    const char* fleetVerb = "";
+    const char* fleetNote = "";
     std::span<const FactionRow> factions;       // standings (Phase 8b)
     const char* factionNotes = "";              // recent raids summary, prebuilt
     std::span<const MissionRow> missionOffers;  // the board (Phase 8c)

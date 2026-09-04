@@ -532,6 +532,7 @@ int main(int argc, char** argv)
     std::vector<sol::ui::CaptainRow> captainRows;
     std::vector<sol::ui::CaptainRow> captainHireRows;
     std::vector<sol::ui::CaptainRow> haulRows; // where the selected one could be sent
+    std::vector<sol::ui::CaptainRow> fleetOptionRows; // who they could serve with (Phase 40 stage A)
     std::vector<sol::ui::FactionRow> factionRows;
     std::vector<sol::ui::MissionRow> missionOfferRows;
     std::vector<sol::ui::MissionRow> missionJournalRows;
@@ -1698,6 +1699,7 @@ int main(int argc, char** argv)
                                         captainRows,
                                         captainHireRows,
                                         haulRows,
+                                        fleetOptionRows,
                                         factionRows);
             game::fillStationMissions(world,
                                       stationText,

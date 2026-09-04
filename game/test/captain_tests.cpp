@@ -2774,6 +2774,7 @@ SOL_TEST(the_crew_tab_puts_a_captains_takings_in_their_own_row_including_a_patro
     std::vector<sol::ui::CaptainRow> captainRows;
     std::vector<sol::ui::CaptainRow> captainHires;
     std::vector<sol::ui::CaptainRow> haulRows;
+    std::vector<sol::ui::CaptainRow> fleetOptions;
     std::vector<sol::ui::FactionRow> factions;
     const auto fill = [&](std::size_t selected) {
         panel.selectedCaptain = static_cast<int>(selected);
@@ -2793,6 +2794,7 @@ SOL_TEST(the_crew_tab_puts_a_captains_takings_in_their_own_row_including_a_patro
                                     captainRows,
                                     captainHires,
                                     haulRows,
+                                    fleetOptions,
                                     factions);
     };
 
@@ -3039,4 +3041,352 @@ SOL_TEST(what_a_hauling_captain_earns_per_minute_across_two_hours)
                 firstHour,
                 secondHour,
                 firstHour > 0.0 ? secondHour / firstHour * 100.0 : 0.0);
+}
+
+// ---------------------------------------------------------------------------
+// Fleets (engine plan Phase 40 stage A).
+//
+// ⚑⚑⚑⚑ A FLEET IS A COMMANDER AND THE PEOPLE WHO ANSWER TO THEM, STORED ON THE
+// SUBORDINATE AS A `who` (the user's ruling 2). There is no `Fleet` object, so
+// `m_captains` is still the flat vector every test above reads - which is the
+// whole point of the ruling and is what these tests are here to keep true.
+
+// ⚑⚑⚑ ONE LEVEL, AND THE TEST IS THAT A CHAIN CANNOT BE STARTED RATHER THAN
+// THAT A CYCLE IS CAUGHT. `setCaptainCommander` refuses the one shape a chain
+// needs - a captain who is both commanded and commanding - so there is never a
+// path of length two for a cycle to close in. Asserting "no cycle" directly
+// would be testing a walk that does not exist; asserting the refusal is testing
+// the thing that makes the walk unnecessary.
+SOL_TEST(a_fleet_is_one_level_deep_so_a_chain_cannot_be_started)
+{
+    Fixture fixture;
+    const Dock dock = fixture.findDock(screenBit(StationScreen::Crew));
+    SOL_REQUIRE(dock.system != kNone);
+    SOL_REQUIRE(fixture.walkIn(dock));
+    SpaceWorld& w = fixture.world();
+
+    // Three, which is what a hall holds and what the stage exit asks for.
+    SOL_REQUIRE(w.hireCaptain(0));
+    SOL_REQUIRE(w.hireCaptain(0));
+    SOL_REQUIRE(w.hireCaptain(0));
+    SOL_REQUIRE(w.captains().size() == 3);
+
+    SOL_CHECK(!w.setCaptainCommander(0, 0)); // themselves
+    SOL_REQUIRE(w.setCaptainCommander(1, 0));
+    SOL_CHECK(w.captainCommanderIndex(1) == 0);
+    SOL_CHECK(w.captainCommanderIndex(0) == w.captains().size()); // the boss answers to nobody
+
+    // Both directions of the one forbidden shape. A commander who already
+    // answers to somebody cannot take people on...
+    SOL_CHECK(!w.setCaptainCommander(2, 1));
+    // ...and somebody who commands people cannot be put under anybody.
+    SOL_CHECK(!w.setCaptainCommander(0, 2));
+    // Which together mean captain 1 is a leaf and captain 0 is a root, still.
+    std::vector<std::size_t> members;
+    w.captainSubordinates(0, members);
+    SOL_CHECK(members.size() == 1 && members[0] == 1);
+    w.captainSubordinates(1, members);
+    SOL_CHECK(members.empty());
+
+    // The second one joins the same fleet, which is the shape that IS allowed.
+    SOL_REQUIRE(w.setCaptainCommander(2, 0));
+    w.captainSubordinates(0, members);
+    SOL_CHECK(members.size() == 2);
+    SOL_CHECK(w.captainInFleet(0) && w.captainInFleet(1) && w.captainInFleet(2));
+
+    // And leaving is a door you can walk back through, unlike death.
+    SOL_REQUIRE(w.clearCaptainCommander(2));
+    SOL_CHECK(!w.captainInFleet(2));
+    SOL_CHECK(!w.clearCaptainCommander(2)); // already answers to nobody
+    std::printf("  three hired, one fleet of two, every chain refused\n");
+}
+
+// ⚑⚑⚑⚑ THE STAGE EXIT: HIRE THREE, PUT TWO UNDER A THIRD, SAVE, RELOAD, AND
+// THE CREW TAB READS THE SAME. Both halves are here in one test because either
+// alone is satisfiable by a bug - a save that carries nothing passes "the tab
+// groups them" perfectly, and a tab that groups nothing passes "the save
+// round-trips" just as well.
+//
+// ⚑⚑⚑ AND THE SHARP ASSERTION IS THE ROW INDEX, NOT THE ORDER. Grouping the
+// roster made a row's POSITION stop being the captain's index in the world,
+// and every button on that tab hands its row straight to `world.captains()[i]`.
+// A reorder that forgot to carry the index would leave a list with the right
+// people in it where every button aims at somebody else - green tests, correct
+// -looking screen, a ship handed to the wrong person. So what is checked is
+// that each row's `index` names the captain whose NAME the row is drawing.
+SOL_TEST(a_fleet_survives_a_save_and_the_crew_tab_draws_it_as_a_group)
+{
+    Fixture fixture;
+    const Dock dock = fixture.findDock(screenBit(StationScreen::Crew));
+    SOL_REQUIRE(dock.system != kNone);
+    SOL_REQUIRE(fixture.walkIn(dock));
+    SpaceWorld& w = fixture.world();
+
+    SOL_REQUIRE(w.hireCaptain(0));
+    SOL_REQUIRE(w.hireCaptain(0));
+    SOL_REQUIRE(w.hireCaptain(0));
+    SOL_REQUIRE(w.captains().size() == 3);
+    // ⚑⚑⚑⚑ AND THIS IS ALSO THE REGRESSION FOR A PHASE 39 DEFECT THIS STAGE
+    // FOUND: THREE CAPTAINS AGAINST ONE HULL IS A SAVE THE GAME WROTE AND THEN
+    // REFUSED TO OPEN. The loader bounded the roster by `fleetCount` on the
+    // reasoning that nobody could be holding more captains than hulls - but a
+    // captain does not have to hold anything, and `hireCaptain` neither caps
+    // the roster nor asks for a ship. Every captain round-trip written before
+    // this one gives each captain a hull first, which is exactly why a full
+    // green gate could not see it. The assertion below is what keeps the case
+    // covered: if a future fixture starts buying hulls here, this fails rather
+    // than quietly testing nothing.
+    SOL_REQUIRE(w.fleet().size() < w.captains().size());
+    // ⚑ THE COMMANDER IS HIRED LAST ON PURPOSE, so the roster order and the
+    // display order genuinely differ: captain 2 leads captains 0 and 1, which
+    // means a grouped tab must print row 0 = captain 2 and cannot pass by
+    // accident of everything already being in order.
+    const std::uint64_t bossWho = w.captains()[2].who;
+    SOL_REQUIRE(w.setCaptainCommander(0, 2));
+    SOL_REQUIRE(w.setCaptainCommander(1, 2));
+
+    std::deque<std::string> text;
+    sol::ui::StationPanel panel;
+    std::vector<sol::ui::MountRow> mounts;
+    std::vector<sol::ui::OutfitRow> components;
+    std::vector<sol::ui::OutfitRow> blackMarket;
+    std::vector<sol::ui::OutfitRow> blackMarketShips;
+    std::vector<sol::ui::OutfitRow> weapons;
+    std::vector<sol::ui::OutfitRow> crewCatalog;
+    std::vector<sol::ui::OutfitRow> crewAboard;
+    std::vector<sol::ui::OutfitRow> ships;
+    std::vector<sol::ui::FleetRow> fleet;
+    std::vector<sol::ui::CaptainRow> captainRows;
+    std::vector<sol::ui::CaptainRow> captainHires;
+    std::vector<sol::ui::CaptainRow> haulRows;
+    std::vector<sol::ui::CaptainRow> fleetOptions;
+    std::vector<sol::ui::FactionRow> factions;
+    const auto readTab = [&](SpaceWorld& world, int selected) {
+        panel.selectedCaptain = selected;
+        game::fillStationOutfitting(world,
+                                    fixture.defs,
+                                    text,
+                                    panel,
+                                    mounts,
+                                    components,
+                                    blackMarket,
+                                    blackMarketShips,
+                                    weapons,
+                                    crewCatalog,
+                                    crewAboard,
+                                    ships,
+                                    fleet,
+                                    captainRows,
+                                    captainHires,
+                                    haulRows,
+                                    fleetOptions,
+                                    factions);
+    };
+
+    // What the tab has to say, checked the same way before and after the
+    // reload so the two answers can be compared as strings.
+    //
+    // ⚑ `SOL_CHECK` AND NOT `SOL_REQUIRE` INSIDE THE LAMBDA: `SOL_REQUIRE`
+    // expands to a bare `return`, which does not compile in a function that
+    // returns a string. The bounds it would have guarded are therefore checked
+    // by hand here, which is the same safety said in the language the lambda
+    // can actually speak.
+    const auto describe = [&](SpaceWorld& world) -> std::string {
+        std::string out;
+        for (const sol::ui::CaptainRow& row : panel.captains) {
+            SOL_CHECK(row.index >= 0);
+            if (row.index < 0 || static_cast<std::size_t>(row.index) >= world.captains().size()) {
+                SOL_CHECK(false);
+                return out;
+            }
+            // The row draws the captain its index names - the whole hazard of
+            // reordering, asserted rather than assumed. The name may carry a
+            // leading "- " for a subordinate, so the world's name must be a
+            // suffix of the row's rather than equal to it.
+            const std::string drawn = row.name;
+            const std::string& real = world.captains()[static_cast<std::size_t>(row.index)].name;
+            SOL_CHECK(drawn.size() >= real.size());
+            if (drawn.size() >= real.size()) {
+                SOL_CHECK(drawn.compare(drawn.size() - real.size(), real.size(), real) == 0);
+            }
+            out += drawn;
+            out += "|";
+        }
+        return out;
+    };
+
+    readTab(w, -1);
+    SOL_REQUIRE(panel.captains.size() == 3);
+    const std::string before = describe(w);
+    std::printf("  before: %s\n", before.c_str());
+    // The commander leads, and both members are drawn under them and marked.
+    SOL_CHECK(panel.captains[0].index == 2);
+    SOL_CHECK(std::string(panel.captains[0].name).rfind("- ", 0) != 0);
+    SOL_CHECK(std::string(panel.captains[1].name).rfind("- ", 0) == 0);
+    SOL_CHECK(std::string(panel.captains[2].name).rfind("- ", 0) == 0);
+    SOL_CHECK(std::string(panel.captains[1].detail).find("under ") == 0);
+
+    const std::string dir = std::string(SOL_GAME_TEST_SCRATCH_DIR) + "/fleet-roster";
+    SOL_REQUIRE(sol::platform::createDirectories(dir.c_str()));
+    const std::string path = dir + "/fleet.sav";
+    SOL_REQUIRE(w.saveTo(path.c_str(), "Fleet"));
+
+    Fixture reloaded;
+    SOL_REQUIRE(reloaded.world().loadFrom(path.c_str()));
+    SpaceWorld& r = reloaded.world();
+    SOL_REQUIRE(r.captains().size() == 3);
+    // ⚑ THE RELATION IS CHECKED BY `who` AND NOT BY INDEX, which is the point
+    // of storing it that way: the roster survived in order here, but the claim
+    // being made is about the person.
+    SOL_CHECK(r.captains()[2].who == bossWho);
+    SOL_CHECK(r.captains()[0].commander == bossWho);
+    SOL_CHECK(r.captains()[1].commander == bossWho);
+    SOL_CHECK(r.captains()[2].commander == game::kNoCommander);
+
+    SOL_REQUIRE(reloaded.walkIn(dock));
+    readTab(r, -1);
+    const std::string after = describe(r);
+    std::printf("  after:  %s\n", after.c_str());
+    SOL_CHECK(after == before);
+}
+
+// ⚑⚑⚑⚑ A FLEET DISSOLVES WHEN ITS COMMANDER GOES, THROUGH BOTH DOORS. The two
+// erasures look alike and mean opposite things - `killCaptain` writes the key
+// into `m_lostCaptains` and a dismissal deliberately does not - but on THIS
+// question they have to agree, because `killCaptain` cannot refuse. A rule that
+// only the polite exit enforced would leave the dead commanding people, which
+// is the phase-39 exit's own defect (a dead captain still visible) in a new
+// place.
+SOL_TEST(losing_a_commander_dissolves_the_fleet_rather_than_orphaning_it)
+{
+    Fixture fixture;
+    const Dock dock = findMiningDock(fixture);
+    SOL_REQUIRE(dock.system != kNone);
+    SOL_REQUIRE(fixture.walkIn(dock));
+    SpaceWorld& w = fixture.world();
+
+    // The commander gets a hull, because the death path is the one the game
+    // runs and it needs a body to take.
+    const std::size_t hull = buyAndArmAMiner(fixture);
+    SOL_REQUIRE(hull != 0);
+    const std::size_t boss = hireAndGive(fixture, hull);
+    SOL_REQUIRE(boss != kNone);
+    SOL_REQUIRE(w.hireCaptain(0));
+    SOL_REQUIRE(w.hireCaptain(0));
+    SOL_REQUIRE(w.captains().size() == 3);
+    const std::size_t a = boss == 0 ? 1 : 0;
+    const std::size_t b = boss == 2 ? 1 : 2;
+    SOL_REQUIRE(a != boss && b != boss && a != b);
+    SOL_REQUIRE(w.setCaptainCommander(a, boss));
+    SOL_REQUIRE(w.setCaptainCommander(b, boss));
+
+    const std::uint64_t survivorA = w.captains()[a].who;
+    const std::uint64_t survivorB = w.captains()[b].who;
+    SOL_REQUIRE(w.orderMine(boss));
+    SOL_REQUIRE(runUntil(w, [&] { return w.captains()[boss].mine.rockStep > 0u; }));
+    SOL_REQUIRE(w.killCaptainPuppet(boss));
+
+    SOL_REQUIRE(w.captains().size() == 2);
+    for (const Captain& left : w.captains()) {
+        SOL_CHECK(left.commander == game::kNoCommander);
+        SOL_CHECK(left.who == survivorA || left.who == survivorB);
+    }
+    std::printf("  the commander died and %zu captain(s) answer to nobody\n", w.captains().size());
+
+    // The other door. Re-form a fleet out of the two who are left, then
+    // dismiss the commander rather than killing them.
+    SOL_REQUIRE(w.setCaptainCommander(1, 0));
+    SOL_CHECK(w.captainInFleet(1));
+    SOL_REQUIRE(w.dismissCaptain(0));
+    SOL_REQUIRE(w.captains().size() == 1);
+    SOL_CHECK(w.captains()[0].commander == game::kNoCommander);
+    SOL_CHECK(!w.captainInFleet(0));
+    std::printf("  and a dismissal dissolves it the same way\n");
+}
+
+// ⚑⚑⚑ THE FLEET SECTION ANSWERS THREE DIFFERENT QUESTIONS AND THE FILL PICKS
+// WHICH. Its verb is what the screen turns into an action, so a branch that set
+// the rows without setting the verb - or the reverse - would be a button that
+// says one thing and does another. Asserted together for that reason.
+SOL_TEST(the_fleet_section_offers_the_verb_that_matches_who_is_selected)
+{
+    Fixture fixture;
+    const Dock dock = fixture.findDock(screenBit(StationScreen::Crew));
+    SOL_REQUIRE(dock.system != kNone);
+    SOL_REQUIRE(fixture.walkIn(dock));
+    SpaceWorld& w = fixture.world();
+    SOL_REQUIRE(w.hireCaptain(0));
+    SOL_REQUIRE(w.hireCaptain(0));
+    SOL_REQUIRE(w.hireCaptain(0));
+
+    std::deque<std::string> text;
+    sol::ui::StationPanel panel;
+    std::vector<sol::ui::MountRow> mounts;
+    std::vector<sol::ui::OutfitRow> components;
+    std::vector<sol::ui::OutfitRow> blackMarket;
+    std::vector<sol::ui::OutfitRow> blackMarketShips;
+    std::vector<sol::ui::OutfitRow> weapons;
+    std::vector<sol::ui::OutfitRow> crewCatalog;
+    std::vector<sol::ui::OutfitRow> crewAboard;
+    std::vector<sol::ui::OutfitRow> ships;
+    std::vector<sol::ui::FleetRow> fleet;
+    std::vector<sol::ui::CaptainRow> captainRows;
+    std::vector<sol::ui::CaptainRow> captainHires;
+    std::vector<sol::ui::CaptainRow> haulRows;
+    std::vector<sol::ui::CaptainRow> fleetOptions;
+    std::vector<sol::ui::FactionRow> factions;
+    const auto fill = [&](int selected) {
+        panel.selectedCaptain = selected;
+        game::fillStationOutfitting(w,
+                                    fixture.defs,
+                                    text,
+                                    panel,
+                                    mounts,
+                                    components,
+                                    blackMarket,
+                                    blackMarketShips,
+                                    weapons,
+                                    crewCatalog,
+                                    crewAboard,
+                                    ships,
+                                    fleet,
+                                    captainRows,
+                                    captainHires,
+                                    haulRows,
+                                    fleetOptions,
+                                    factions);
+    };
+
+    // Nobody selected: the section says so rather than showing an empty box.
+    fill(-1);
+    SOL_CHECK(panel.fleetOptions.empty());
+    SOL_CHECK(std::string(panel.fleetNote).find("select a captain") != std::string::npos);
+
+    // A free captain is offered the other two to serve under, and the rows
+    // name THEM rather than the selection.
+    fill(0);
+    SOL_CHECK(std::string(panel.fleetVerb) == "Under");
+    SOL_REQUIRE(panel.fleetOptions.size() == 2);
+    SOL_CHECK(panel.fleetOptions[0].index != 0 && panel.fleetOptions[1].index != 0);
+
+    SOL_REQUIRE(w.setCaptainCommander(0, 2));
+    // The subordinate is offered one row - their commander - and the way out.
+    fill(0);
+    SOL_CHECK(std::string(panel.fleetVerb) == "Leave");
+    SOL_REQUIRE(panel.fleetOptions.size() == 1);
+    // ⚑⚑⚑ THE ROW IS THE CAPTAIN BEING RELEASED, NOT THE COMMANDER THEY ARE
+    // LEAVING, because `LeaveFleet` carries its own subject. The first cut of
+    // the fill drew the commander here, which would have released nobody - so
+    // this assertion is the one that caught it.
+    SOL_CHECK(panel.fleetOptions[0].index == 0);
+    SOL_CHECK(std::string(panel.fleetOptions[0].detail).find("answers to") == 0);
+    // ⚑ AND THE ROW CARRIES THE SUBJECT OF THE ACTION, which for "Leave" is
+    // the captain being released. It is the selection here and the row's own
+    // index for "Free" below, and both go through one action - so this is the
+    // assertion that keeps those two from meaning different things.
+    fill(2);
+    SOL_CHECK(std::string(panel.fleetVerb) == "Free");
+    SOL_REQUIRE(panel.fleetOptions.size() == 1);
+    SOL_CHECK(panel.fleetOptions[0].index == 0);
+    std::printf("  Under / Leave / Free, each with the row the action needs\n");
 }

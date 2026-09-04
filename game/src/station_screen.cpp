@@ -844,18 +844,24 @@ struct CaptainClick
         const CatalogCells cells = catalogCells(ui, row, false, secondary != nullptr);
         ui.pushId(i);
 
+        // ⚑⚑⚑ THE ROW REPORTS WHO IT IS, NOT WHERE IT SITS (Phase 40 stage A).
+        // The roster is grouped by fleet now, so position and captain index are
+        // two different numbers - and every button below hands its answer
+        // straight to `world.captains()[...]`. `index` is -1 on the two lists
+        // that are not the roster, where position IS the answer.
+        const int subject = person.index >= 0 ? person.index : i;
         std::snprintf(buffer, sizeof(buffer), "%s%s", person.selected ? "> " : "  ", person.name);
         clipped(ui, cells.name, buffer, ui.theme().textPrimary, ui.theme().strongStyle);
         clipped(ui, cells.detail, person.detail, ui.theme().textDim);
         if (ui.button(inset(cells.primary, 2.0f), primary)) {
-            click = {.row = i, .secondary = false};
+            click = {.row = subject, .secondary = false};
         }
         // ⚑⚑ A CAPTAIN HOLDING A HULL CANNOT BE DISMISSED, AND THE BUTTON
         // SAYS SO BY BEING GREY RATHER THAN BY VANISHING - Phase 28's decision
         // 3, and the only channel a refusal has here, because a station action
         // carries no way to report one back.
         if (secondary != nullptr && ui.button(inset(cells.secondary, 2.0f), secondary, !person.assigned)) {
-            click = {.row = i, .secondary = true};
+            click = {.row = subject, .secondary = true};
         }
 
         ui.popId();
@@ -877,7 +883,11 @@ void buildCrewTab(UiContext& ui, StationPanel& panel, StationScreenState& state,
     }
     const bool hasCaptains = !panel.captains.empty() || hires;
     const float contentHeight =
-        (kSectionHeight + theme.spacing) * (hasCaptains ? 6.0f : 2.0f) +
+        // Seven sections with captains since Phase 40 stage A added "Fleet",
+        // six before it. ⚑ The count is a literal here and the sections are
+        // drawn below, which is a pair that has to be kept in step by hand -
+        // get it wrong and the tab scrolls short of its own last row.
+        (kSectionHeight + theme.spacing) * (hasCaptains ? 7.0f : 2.0f) +
         (hasCaptains ? listHeight(ui, std::max<std::size_t>(panel.captains.size(), 1)) +
                            listHeight(ui, std::max<std::size_t>(giveable, 1)) +
                            // The order section: one status row plus wherever
@@ -888,8 +898,29 @@ void buildCrewTab(UiContext& ui, StationPanel& panel, StationScreenState& state,
                            // row of the same height and is always drawn - a
                            // control that appeared and vanished as an order
                            // came and went would move every row under it.
-                           listHeight(ui, 1) + kRowHeight * 4.0f +
+                           // ⚑⚑⚑⚑ SIX ROWS, COUNTED RATHER THAN ACCUMULATED, AND
+                           // THE OLD FIGURE WAS SHORT (Phase 40 stage A, fixing
+                           // Phase 39). This read `listHeight(ui, 1) +
+                           // kRowHeight * 4.0f` while the section draws SIX
+                           // rows - status, Earned, Work, Patrol, Escort and
+                           // the floor strip - and `Column::row` advances by
+                           // `height + spacing`, so four bare `kRowHeight`s
+                           // under-count by their spacing as well. The `Earned`
+                           // row arrived in Phase 39's exit commit without its
+                           // height, and the tab has been reserving less than
+                           // it draws ever since; the last section simply ran
+                           // off the bottom of a scroll that would not go far
+                           // enough. It was invisible while the last section
+                           // was one nobody scrolled to, and Phase 40 stage A
+                           // put a new one there.
+                           //
+                           // ⚑ `listHeight(ui, 6)` rather than a sum, because a
+                           // sum is what drifted: every row added here since
+                           // stage B has had to remember to add a term.
+                           listHeight(ui, 6) +
                            listHeight(ui, std::max<std::size_t>(panel.haulDestinations.size(), 1)) +
+                           // The fleet section (Phase 40 stage A).
+                           listHeight(ui, std::max<std::size_t>(panel.fleetOptions.size(), 1)) +
                            listHeight(ui, hires ? std::max<std::size_t>(panel.captainHires.size(), 1) : 1)
                      : 0.0f) +
         listHeight(ui, std::max<std::size_t>(panel.crewAboard.size(), 1)) +
@@ -915,6 +946,39 @@ void buildCrewTab(UiContext& ui, StationPanel& panel, StationScreenState& state,
                 panel.action = {.kind = StationAction::Kind::DismissCaptain, .index = employed.row};
             } else {
                 panel.action = {.kind = StationAction::Kind::SelectCaptain, .index = employed.row};
+            }
+        }
+
+        // ⚑⚑⚑⚑ THE FLEET (Phase 40 stage A). One list answering whichever of
+        // three questions the selected captain poses - see
+        // `StationPanel::fleetOptions`, where the choice is made. The screen
+        // draws what it is told, including the verb on the button, because all
+        // three branches turn on rules `setCaptainCommander` refuses by.
+        //
+        // ⚑⚑ FIVE GLYPHS ON EVERY VERB, AND THAT IS MEASURED RATHER THAN
+        // TASTEFUL. `kButtonWidth` is 78 px less a 2 px inset, about seven
+        // glyphs of the real font - the budget that caught "Stand down" and
+        // "Hand back" overlapping in stage E's drive, and the fifth cell-width
+        // bug of Phase 39. "Under", "Leave" and "Free" are inside it with room
+        // to spare, and none of them is a word a longer synonym improves.
+        sectionHeader(ui, column.row(kSectionHeight), "Fleet");
+        if (panel.fleetOptions.empty()) {
+            emptyNote(ui, column, panel.fleetNote[0] != '\0' ? panel.fleetNote : "(nobody to serve with)");
+        } else {
+            const CaptainClick fleet = captainList(
+                ui, column, "fleet", panel.fleetOptions, panel.fleetVerb, nullptr, "(nobody to serve with)");
+            if (fleet.row >= 0) {
+                // ⚑⚑⚑ THE VERB DECIDES THE ACTION, AND IT IS READ OFF THE SAME
+                // FIELD THE BUTTON WAS LABELLED FROM. "Under" points the
+                // selection at the row; "Leave" and "Free" release the row
+                // itself. Deriving it from the label rather than from a second
+                // flag is what keeps a button that says one thing from doing
+                // another - the two would otherwise be set in one place and
+                // read in two.
+                const bool joining = panel.fleetVerb[0] == 'U';
+                panel.action = {.kind = joining ? StationAction::Kind::SetCommander
+                                                : StationAction::Kind::LeaveFleet,
+                                .index = fleet.row};
             }
         }
 
@@ -961,11 +1025,25 @@ void buildCrewTab(UiContext& ui, StationPanel& panel, StationScreenState& state,
             std::snprintf(heading, sizeof(heading), "Standing order");
         }
         sectionHeader(ui, column.row(kSectionHeight), heading);
-        if (panel.selectedCaptain < 0 ||
-            static_cast<std::size_t>(panel.selectedCaptain) >= panel.captains.size()) {
+        // ⚑⚑⚑⚑ FOUND BY WHO IT IS, NOT BY WHERE IT SITS (Phase 40 stage A).
+        // This read `panel.captains[panel.selectedCaptain]` while that was the
+        // same thing; grouping the roster by fleet made position and captain
+        // index two different numbers, and an indexed read here would have put
+        // one captain's NAME on another captain's order - the row saying one
+        // person and every button under it acting on another. It is the same
+        // class as `firstFreeMountFor`'s warning in this file, arriving through
+        // a reorder rather than through a duplicated rule.
+        const CaptainRow* selectedRow = nullptr;
+        for (const CaptainRow& row : panel.captains) {
+            if (row.index == panel.selectedCaptain) {
+                selectedRow = &row;
+                break;
+            }
+        }
+        if (panel.selectedCaptain < 0 || selectedRow == nullptr) {
             emptyNote(ui, column, "(select a captain above)");
         } else {
-            const CaptainRow& who = panel.captains[static_cast<std::size_t>(panel.selectedCaptain)];
+            const CaptainRow& who = *selectedRow;
             const Rect row = column.row(kRowHeight);
             rowBackground(ui, row, 0);
             const CatalogCells cells = catalogCells(ui, row, false, true);

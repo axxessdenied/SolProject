@@ -230,7 +230,11 @@ constexpr std::uint32_t kSaveMagic = 0x37'4c'4f'53u; // "SOL7"
 // something worse, which is silently drop every floor the player set and start
 // dumping their cargo at whatever the market offered. That is the case the
 // version number exists for.
-constexpr std::uint32_t kSaveVersion = 45;
+// v46 (Phase 40 stage A): who a captain answers to. A new 64-bit field on every
+// captain row, so a v45 reader would run off the end of the roster and into the
+// list of the dead - the version is doing its ordinary job here rather than
+// guarding a meaning, which is the easy case and still the reason it exists.
+constexpr std::uint32_t kSaveVersion = 46;
 
 // ---------------------------------------------------------------------------
 // ⚑⚑⚑⚑ WHAT THE AUTHORED HALF OF THIS GALAXY WAS MADE OF, IN EIGHT BYTES
@@ -7916,6 +7920,13 @@ void SpaceWorld::killCaptain(std::size_t captainIndex, std::uint32_t system)
     if (std::find(m_lostCaptains.begin(), m_lostCaptains.end(), captain.who) == m_lostCaptains.end()) {
         m_lostCaptains.push_back(captain.who);
     }
+    // ⚑⚑ AND THEIR FLEET GOES WITH THEM (Phase 40 stage A), before the erase
+    // renumbers anybody. The dismissal path does the identical thing, which is
+    // the point: this one cannot refuse, so a rule only the polite exit
+    // enforced would leave a dead commander with people answering to them - and
+    // the hall filter above has just proved how long a dead captain can go on
+    // being visible when nothing says otherwise.
+    releaseSubordinatesOf(captainIndex);
     removeCaptain(captainIndex);
     if (fleetIndex < m_fleet.size()) {
         removeFleetShip(fleetIndex);
@@ -9374,8 +9385,158 @@ bool SpaceWorld::dismissCaptain(std::size_t captainIndex, std::string* outError)
         return refuse("'" + captain.name + "' is holding a ship - recall them first", outError);
     }
     SOL_LOG_INFO("dismissed captain %s", captain.name.c_str());
+    // Their fleet, if they had one, before the erase renumbers anybody (Phase
+    // 40 stage A). See `releaseSubordinatesOf` for why this is a release and
+    // not a refusal, and why the death path does the same thing.
+    releaseSubordinatesOf(captainIndex);
     m_captains.erase(m_captains.begin() + static_cast<std::ptrdiff_t>(captainIndex));
     return true;
+}
+
+std::size_t SpaceWorld::captainIndexOfWho(std::uint64_t who) const
+{
+    // `kNoCommander` is not a person, so it must not find one - and without
+    // this line it would find nobody by walking the whole roster, which is the
+    // same answer arrived at by accident rather than on purpose.
+    if (who == kNoCommander) {
+        return m_captains.size();
+    }
+    for (std::size_t i = 0; i < m_captains.size(); ++i) {
+        if (m_captains[i].who == who) {
+            return i;
+        }
+    }
+    return m_captains.size();
+}
+
+std::size_t SpaceWorld::captainCommanderIndex(std::size_t captainIndex) const
+{
+    if (captainIndex >= m_captains.size()) {
+        return m_captains.size();
+    }
+    return captainIndexOfWho(m_captains[captainIndex].commander);
+}
+
+void SpaceWorld::captainSubordinates(std::size_t captainIndex, std::vector<std::size_t>& out) const
+{
+    out.clear();
+    if (captainIndex >= m_captains.size()) {
+        return;
+    }
+    // ⚑ ASKED OF THE PERSON AND NOT OF THE SLOT. The commander's `who` is what
+    // the subordinates carry, so this reads the key once and compares keys -
+    // an index comparison here would be right until the next erase.
+    const std::uint64_t who = m_captains[captainIndex].who;
+    if (who == kNoCommander) {
+        return; // cannot happen for a hired captain; cheap to say so anyway
+    }
+    for (std::size_t i = 0; i < m_captains.size(); ++i) {
+        if (i != captainIndex && m_captains[i].commander == who) {
+            out.push_back(i);
+        }
+    }
+}
+
+bool SpaceWorld::captainInFleet(std::size_t captainIndex) const
+{
+    if (captainIndex >= m_captains.size()) {
+        return false;
+    }
+    if (m_captains[captainIndex].commander != kNoCommander) {
+        return true;
+    }
+    std::vector<std::size_t> members;
+    captainSubordinates(captainIndex, members);
+    return !members.empty();
+}
+
+bool SpaceWorld::setCaptainCommander(std::size_t captainIndex,
+                                     std::size_t commanderIndex,
+                                     std::string* outError)
+{
+    // ⚑⚑ THE SAME DOOR EVERY OTHER CAPTAIN ACTION CHECKS FIRST. Forming a
+    // fleet is telling two people who answers to whom, and this file's rule
+    // since stage A is that you say such things to a person's face - which is
+    // `orderMine`'s *"must be docked to give a captain an order"* with the
+    // order being about each other rather than about a place.
+    if (!isDocked()) {
+        return refuse("must be docked to put a captain under a commander", outError);
+    }
+    if (captainIndex >= m_captains.size() || commanderIndex >= m_captains.size()) {
+        return refuse("no such captain", outError);
+    }
+    if (captainIndex == commanderIndex) {
+        return refuse("'" + m_captains[captainIndex].name + "' cannot command themselves", outError);
+    }
+    // ⚑⚑⚑⚑ ONE LEVEL, CHECKED IN BOTH DIRECTIONS, AND THAT IS WHAT MAKES A
+    // CYCLE UNREPRESENTABLE RATHER THAN MERELY REFUSED. A chain needs a captain
+    // who is both somebody's subordinate and somebody's commander; forbid that
+    // one shape and there is no chain of length two, so there is nothing for a
+    // cycle to close. The alternative - walking the chain looking for the
+    // captain we started at - is a loop that has to be right forever, against a
+    // check that cannot be wrong.
+    const Captain& commander = m_captains[commanderIndex];
+    if (commander.commander != kNoCommander) {
+        return refuse("'" + commander.name + "' already answers to somebody", outError);
+    }
+    std::vector<std::size_t> mine;
+    captainSubordinates(captainIndex, mine);
+    if (!mine.empty()) {
+        return refuse("'" + m_captains[captainIndex].name + "' commands a fleet of their own", outError);
+    }
+    Captain& captain = m_captains[captainIndex];
+    if (captain.commander == commander.who) {
+        return refuse("'" + captain.name + "' already answers to '" + commander.name + "'", outError);
+    }
+    captain.commander = commander.who;
+    SOL_LOG_INFO("%s now answers to %s", captain.name.c_str(), commander.name.c_str());
+    return true;
+}
+
+bool SpaceWorld::clearCaptainCommander(std::size_t captainIndex, std::string* outError)
+{
+    if (!isDocked()) {
+        return refuse("must be docked to break up a fleet", outError);
+    }
+    if (captainIndex >= m_captains.size()) {
+        return refuse("no such captain", outError);
+    }
+    Captain& captain = m_captains[captainIndex];
+    if (captain.commander == kNoCommander) {
+        return refuse("'" + captain.name + "' answers to nobody", outError);
+    }
+    const std::size_t was = captainIndexOfWho(captain.commander);
+    captain.commander = kNoCommander;
+    SOL_LOG_INFO("%s no longer answers to %s",
+                 captain.name.c_str(),
+                 was < m_captains.size() ? m_captains[was].name.c_str() : "anybody");
+    return true;
+}
+
+void SpaceWorld::releaseSubordinatesOf(std::size_t captainIndex)
+{
+    if (captainIndex >= m_captains.size()) {
+        return;
+    }
+    const std::uint64_t who = m_captains[captainIndex].who;
+    if (who == kNoCommander) {
+        return;
+    }
+    std::uint32_t freed = 0;
+    for (std::size_t i = 0; i < m_captains.size(); ++i) {
+        if (i != captainIndex && m_captains[i].commander == who) {
+            m_captains[i].commander = kNoCommander;
+            ++freed;
+        }
+    }
+    // Said rather than done quietly: a player who posted a fleet and then lost
+    // its commander to the hazard has three captains whose orders still stand
+    // and no fleet, and the Crew tab is two jumps away.
+    if (freed != 0) {
+        SOL_LOG_INFO("%s's fleet is dissolved - %u captain(s) answer to nobody now",
+                     m_captains[captainIndex].name.c_str(),
+                     freed);
+    }
 }
 
 bool SpaceWorld::assignCaptain(std::size_t captainIndex, std::size_t fleetIndex, std::string* outError)
@@ -15367,6 +15528,11 @@ bool SpaceWorld::saveTo(const char* path, std::string_view displayName)
         writer.write(captain.who);
         writer.write(captain.ship);
         writer.write(captain.cut);
+        // Who they answer to (v46), as a `who` and not an index - see
+        // `Captain::commander`. It rides beside `who` rather than beside the
+        // order because it is part of the PERSON: an order is what you told
+        // them this week, and a fleet is who they are in.
+        writer.write(captain.commander);
         // The order (v40), then the haul. Two records because they answer two
         // questions - see `CaptainOrder`.
         //
@@ -15599,16 +15765,40 @@ bool SpaceWorld::loadFrom(const char* path)
     // names the same one twice, or names one past the end, describes a fleet
     // this code cannot represent - and the failure it would otherwise produce is
     // silent, because both captains would simply appear to fly the same ship.
+    // ⚑⚑⚑⚑ THE BOUND IS THE GALAXY'S CREW-HALL SEATS, NOT THE FLEET, AND THAT
+    // IS A FIX RATHER THAN A LOOSENING (Phase 40 stage A, fixing Phase 39).
+    // This read `captainCount > fleetCount` with the reason *"more captains
+    // than hulls: nobody could be holding them all"* - and nobody has to be.
+    // `hireCaptain` has no cap and requires no hull: a player who walks into a
+    // crew hall and hires all three, holding only the starter, has THREE
+    // captains and ONE ship. The game wrote that save and then refused to open
+    // it - the FOURTH save in this arc that its own writer's output would not
+    // pass, and it survived Phase 39's full green gate for stage E's reason
+    // exactly: every captain round-trip in the suite gives each captain a hull
+    // first, so the case was never written down.
+    //
+    // ⚑⚑ WHAT THE CHECK IS ACTUALLY FOR IS THE ALLOCATION BELOW, WHICH IS
+    // ATTACKER-CHOSEN, and the honest ceiling on a roster is the number of
+    // places a captain can be hired FROM. That is the same `seats` figure the
+    // list of the dead is bounded by twenty lines down, so it is computed once
+    // here and both use it. ⚑ The invariants that actually matter about hulls
+    // are unchanged and are per-captain: `ship < fleetCount`, never the active
+    // ship, and no two captains on one hull.
+    std::uint64_t seats = 0;
+    for (const sim::SystemSpec& spec : m_galaxy.systems) {
+        seats += static_cast<std::uint64_t>(spec.stations.size()) * kCaptainsPerHall;
+    }
     std::uint32_t captainCount = 0;
-    if (!reader.read(captainCount) || captainCount > fleetCount) {
-        return false; // more captains than hulls: nobody could be holding them all
+    if (!reader.read(captainCount) || static_cast<std::uint64_t>(captainCount) > seats) {
+        return false; // more captains than the galaxy has berths to hire them at
     }
     std::vector<Captain> captains(captainCount);
     std::vector<std::uint8_t> held(fleetCount, 0u);
     std::uint8_t escorts = 0u;
     for (Captain& captain : captains) {
         if (!reader.readString(captain.name) || !reader.readString(captain.trade) ||
-            !reader.read(captain.who) || !reader.read(captain.ship) || !reader.read(captain.cut)) {
+            !reader.read(captain.who) || !reader.read(captain.ship) || !reader.read(captain.cut) ||
+            !reader.read(captain.commander)) {
             return false;
         }
         std::uint8_t kind = 0;
@@ -15716,6 +15906,44 @@ bool SpaceWorld::loadFrom(const char* path)
         }
         held[captain.ship] = 1u;
     }
+    // ⚑⚑⚑⚑ THE FLEET GRAPH, CHECKED IN A SECOND PASS BECAUSE IT IS THE FIRST
+    // THING IN THIS LOADER THAT IS ABOUT THE ROSTER RATHER THAN ABOUT A ROW
+    // (v46). A commander may be written after the captain who answers to them,
+    // so "does this key name somebody" is unanswerable until every name is in.
+    // Same standard as the rest of the block: a state the game cannot PRODUCE
+    // is a state it will not ACCEPT.
+    for (std::size_t i = 0; i < captains.size(); ++i) {
+        // ⚑⚑⚑ DUPLICATE KEYS ARE REFUSED, AND THAT CHECK IS NEW RATHER THAN
+        // TIGHTENED. Until v46 a `who` was only ever compared against the crew
+        // hall and the list of the dead, so two captains sharing one key was
+        // merely odd. It is now the thing a commander is RESOLVED by, so a file
+        // with a duplicate describes a fleet where "who answers to whom" has
+        // two answers - and `captainIndexOfWho` would silently return the
+        // first, forever.
+        for (std::size_t j = i + 1; j < captains.size(); ++j) {
+            if (captains[i].who == captains[j].who) {
+                return false;
+            }
+        }
+        const std::uint64_t boss = captains[i].commander;
+        if (boss == kNoCommander) {
+            continue;
+        }
+        if (boss == captains[i].who) {
+            return false; // commands themselves
+        }
+        const auto found = std::find_if(
+            captains.begin(), captains.end(), [boss](const Captain& c) { return c.who == boss; });
+        if (found == captains.end()) {
+            return false; // answers to somebody who is not on the roster
+        }
+        // One level deep, which `setCaptainCommander` refuses at the door and
+        // this re-checks: with no captain both commanding and commanded there
+        // is no chain of length two for a cycle to close in.
+        if (found->commander != kNoCommander) {
+            return false;
+        }
+    }
     // Who died (v45), read where the writer put it: after the roster and before
     // the economy. ⚑ The bound is the roster size a galaxy could ever offer -
     // `kCaptainsPerHall` at every station of every system - because a file
@@ -15726,10 +15954,8 @@ bool SpaceWorld::loadFrom(const char* path)
     if (!reader.read(lostCount)) {
         return false;
     }
-    std::uint64_t seats = 0;
-    for (const sim::SystemSpec& spec : m_galaxy.systems) {
-        seats += static_cast<std::uint64_t>(spec.stations.size()) * kCaptainsPerHall;
-    }
+    // `seats` is computed above the roster now - one figure, two bounds, and
+    // the roster is the one that needed it first.
     if (static_cast<std::uint64_t>(lostCount) > seats) {
         return false;
     }
