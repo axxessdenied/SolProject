@@ -20,10 +20,12 @@
 // slid into the slot, which is a ship changing hands with nothing said.
 
 #include "space_world.hpp"
+#include "station_ui.hpp"
 
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <deque>
 #include <string>
 #include <vector>
 
@@ -2714,6 +2716,102 @@ SOL_TEST(a_dead_captain_stays_dead_and_a_dismissed_one_comes_back)
     SOL_CHECK(std::none_of(
         after.begin(), after.end(), [doomed](const CaptainCandidate& c) { return c.who == doomed; }));
     std::printf("  and after a reload the hall is still %zu deep\n", after.size());
+}
+
+// ⚑⚑⚑⚑ THE OTHER HALF OF WHAT THE PHASE EXIT PHOTOGRAPHED: THE LEDGER IS ITS
+// OWN ROW, AND A PATROL HAS AN ANSWER. The Crew tab used to append "- N cr to
+// you, M to them" to the captain's status sentence, under an
+// `earned != 0 || paid > 0` guard. Two things came out of that in one
+// photograph: a miner twenty minutes in read "at the rock, 34.7 Raw Ore
+// aboard, 18 rock(s) - 17073 cr to you, 38" and clipped MID-NUMBER, and a
+// patrol - which earns nothing, ever - printed no money at all, so the screen
+// had no answer to the exit's own question for one of its three captains.
+//
+// ⚑⚑⚑ THE WIDTH HALF IS NOT TESTABLE HERE AND THIS FILE SAYS SO RATHER THAN
+// PRETENDING: the synthetic test font ships only `hud` and `heading`, so a
+// `ui.unit` test measures a different font from the one the game draws, and the
+// instrument for a cell width in this project is a screenshot. What IS testable
+// is the two facts that make the width safe - that the money is no longer in
+// the sentence that grows, and that it is filled for an order which earns
+// nothing - so those are what is asserted.
+SOL_TEST(the_crew_tab_puts_a_captains_takings_in_their_own_row_including_a_patrols_nothing)
+{
+    Fixture fixture;
+    const Dock dock = findMiningDock(fixture);
+    SOL_REQUIRE(dock.system != kNone);
+    SOL_REQUIRE(fixture.walkIn(dock));
+    SpaceWorld& w = fixture.world();
+
+    const std::size_t minerHull = buyAndArmAMiner(fixture);
+    SOL_REQUIRE(minerHull != 0);
+    const std::size_t miner = hireAndGive(fixture, minerHull);
+    SOL_REQUIRE(miner != kNone);
+    SOL_REQUIRE(w.orderMine(miner));
+
+    const std::size_t guardHull = buyAndArmAFighter(fixture);
+    SOL_REQUIRE(guardHull != 0);
+    const std::size_t guard = hireAndGive(fixture, guardHull);
+    SOL_REQUIRE(guard != kNone);
+    SOL_REQUIRE(w.orderPatrol(guard));
+
+    // Let the miner actually sell something, so the ledger under test is a real
+    // one rather than a pair of zeroes that any bug satisfies.
+    SOL_REQUIRE(runUntil(w, [&] { return w.captains()[miner].ledger.earned > 0.0; }, 20000));
+    SOL_REQUIRE(w.captains()[guard].ledger.earned == 0.0);
+    SOL_REQUIRE(w.captains()[guard].ledger.paid == 0.0);
+
+    std::deque<std::string> text;
+    sol::ui::StationPanel panel;
+    std::vector<sol::ui::MountRow> mounts;
+    std::vector<sol::ui::OutfitRow> components;
+    std::vector<sol::ui::OutfitRow> blackMarket;
+    std::vector<sol::ui::OutfitRow> blackMarketShips;
+    std::vector<sol::ui::OutfitRow> weapons;
+    std::vector<sol::ui::OutfitRow> crewCatalog;
+    std::vector<sol::ui::OutfitRow> crewAboard;
+    std::vector<sol::ui::OutfitRow> ships;
+    std::vector<sol::ui::FleetRow> fleet;
+    std::vector<sol::ui::CaptainRow> captainRows;
+    std::vector<sol::ui::CaptainRow> captainHires;
+    std::vector<sol::ui::CaptainRow> haulRows;
+    std::vector<sol::ui::FactionRow> factions;
+    const auto fill = [&](std::size_t selected) {
+        panel.selectedCaptain = static_cast<int>(selected);
+        game::fillStationOutfitting(w,
+                                    fixture.defs,
+                                    text,
+                                    panel,
+                                    mounts,
+                                    components,
+                                    blackMarket,
+                                    blackMarketShips,
+                                    weapons,
+                                    crewCatalog,
+                                    crewAboard,
+                                    ships,
+                                    fleet,
+                                    captainRows,
+                                    captainHires,
+                                    haulRows,
+                                    factions);
+    };
+
+    fill(miner);
+    const std::string minerStatus = panel.captainStatus;
+    const std::string minerEarned = panel.captainEarned;
+    std::printf("  miner: status \"%s\" | earned \"%s\"\n", minerStatus.c_str(), minerEarned.c_str());
+    // The money is in the row, and it is NOT in the sentence that grows.
+    SOL_CHECK(minerEarned.find("cr to you") != std::string::npos);
+    SOL_CHECK(minerStatus.find("cr to you") == std::string::npos);
+    SOL_CHECK(minerStatus.find("at the rock") != std::string::npos);
+
+    fill(guard);
+    const std::string guardEarned = panel.captainEarned;
+    std::printf("  patrol: status \"%s\" | earned \"%s\"\n", panel.captainStatus, guardEarned.c_str());
+    // ⚑ A PATROL EARNS NOTHING AND THE SCREEN SAYS SO. Zero is an answer to
+    // "what have they made"; an empty row is not, and an empty row is what the
+    // old guard produced for every patrol in the game.
+    SOL_CHECK(guardEarned.find("0 cr to you") != std::string::npos);
 }
 
 SOL_TEST(what_a_mining_captain_earns_per_minute_across_an_hour)

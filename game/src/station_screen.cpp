@@ -994,6 +994,22 @@ void buildCrewTab(UiContext& ui, StationPanel& panel, StationScreenState& state,
             }
             ui.popId();
 
+            // ⚑⚑⚑ WHAT THEY HAVE MADE, ON ITS OWN ROW (the phase exit). See
+            // `captainEarned` for why it is not the tail of the line above: a
+            // status sentence grows with its numbers, and a miner twenty
+            // minutes in clipped mid-figure. Drawn for every order kind and for
+            // none, so the row neither appears nor vanishes - a row that comes
+            // and goes moves every row under it, which this section already has
+            // enough of with the floor strip.
+            const Rect earnedRow = column.row(kRowHeight);
+            rowBackground(ui, earnedRow, 1);
+            const CatalogCells earnedCells = catalogCells(ui, earnedRow, false, false);
+            clipped(ui, earnedCells.name, "Earned", theme.textPrimary);
+            clipped(ui,
+                    earnedCells.detail,
+                    panel.captainEarned[0] != '\0' ? panel.captainEarned : "nothing yet - no ship",
+                    theme.textDim);
+
             // ⚑⚑ "MINE HERE" IS A ROW AND NOT A DESTINATION, WHICH IS THE
             // ORDER'S SHAPE SHOWING THROUGH THE SCREEN. Every other way of
             // giving an order on this tab picks something out of a list,
@@ -1003,7 +1019,7 @@ void buildCrewTab(UiContext& ui, StationPanel& panel, StationScreenState& state,
             // button. The note beside it carries the refusal, because the two
             // this order can hit are both fixable and neither is guessable.
             const Rect mineRow = column.row(kRowHeight);
-            rowBackground(ui, mineRow, 1);
+            rowBackground(ui, mineRow, 2);
             const CatalogCells mineCells = catalogCells(ui, mineRow, false, false);
             ui.pushId("mine");
             clipped(ui, mineCells.name, "Work this system", theme.textPrimary);
@@ -1019,7 +1035,7 @@ void buildCrewTab(UiContext& ui, StationPanel& panel, StationScreenState& state,
             // ten-glyph label by having two buttons overlap; the labels here
             // were picked to that number rather than trimmed back to it later.
             const Rect patrolRow = column.row(kRowHeight);
-            rowBackground(ui, patrolRow, 0);
+            rowBackground(ui, patrolRow, 3);
             const CatalogCells patrolCells = catalogCells(ui, patrolRow, false, false);
             ui.pushId("patrol");
             clipped(ui, patrolCells.name, "Patrol this system", theme.textPrimary);
@@ -1030,7 +1046,7 @@ void buildCrewTab(UiContext& ui, StationPanel& panel, StationScreenState& state,
             ui.popId();
 
             const Rect escortRow = column.row(kRowHeight);
-            rowBackground(ui, escortRow, 1);
+            rowBackground(ui, escortRow, 4);
             const CatalogCells escortCells = catalogCells(ui, escortRow, false, false);
             ui.pushId("escort");
             clipped(ui, escortCells.name, "Fly as my escort", theme.textPrimary);

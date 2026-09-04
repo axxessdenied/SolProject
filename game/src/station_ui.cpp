@@ -522,18 +522,32 @@ void fillStationOutfitting(const SpaceWorld& world,
         // came back, not what was projected. Shown from the first haul, because
         // a captain who has run one leg and made nothing is exactly the case
         // this is for.
-        if (hasShip && (captain.ledger.earned != 0.0 || captain.ledger.paid > 0.0)) {
+        //
+        // ⚑⚑⚑⚑ AND IT IS ITS OWN ROW SINCE THE PHASE EXIT, BECAUSE A SENTENCE
+        // THAT GROWS WITH ITS NUMBERS OUTGROWS ITS CELL. Appended to `status`
+        // it read "at the rock, 34.7 Raw Ore aboard, 18 rock(s) - 17073 cr to
+        // you, 38..." and clipped mid-number - the fifth cell-width bug of this
+        // phase, and the only one to eat the figure the phase exists to show.
+        // The four before it were fixed by shortening a label; this one cannot
+        // be, because the length is the player's balance rather than a word.
+        // ⚑⚑ It is drawn UNCONDITIONALLY, which fixes the second half: a patrol
+        // earns nothing, so the old `!= 0.0` guard meant the screen printed no
+        // money for it at all and could not answer "what has this one made".
+        // Zero is an answer; silence is not.
+        std::string earned;
+        if (hasShip) {
             char money[96] = {};
             std::snprintf(money,
                           sizeof(money),
-                          " - %.0f cr to you, %.0f to them",
+                          "%.0f cr to you, %.0f to them",
                           captain.ledger.earned,
                           captain.ledger.paid);
-            status += money;
+            earned = money;
             if (captain.ledger.losses > 0) {
-                status += ", " + std::to_string(captain.ledger.losses) + " lost";
+                earned += ", " + std::to_string(captain.ledger.losses) + " lost";
             }
         }
+        panel.captainEarned = store(text, earned);
         panel.captainStatus = store(text, status);
         panel.captainCanStandDown = ordered;
         panel.captainCanRecall = parkedHere && !ordered;

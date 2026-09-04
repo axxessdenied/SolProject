@@ -884,6 +884,17 @@ struct StationPanel
     // than the row because two station names with their systems is a string the
     // content sizes, and a heading spans the width where a cell does not.
     const char* captainRoute = "";
+    // ⚑⚑⚑⚑ WHAT THEY HAVE MADE, ON ITS OWN ROW (the phase exit). It rode the
+    // tail of `captainStatus` until the exit photographed a miner: "at the
+    // rock, 34.7 Raw Ore aboard, 18 rock(s) - 17073 cr to you, 38..." ran out
+    // of the detail cell mid-number, which is the fifth cell-width bug of this
+    // phase and the first one to clip the thing the phase EXISTS to show. The
+    // cause is that a status sentence grows with the numbers in it, so a cell
+    // that fits a new captain stops fitting a rich one. ⚑⚑ A row of its own is
+    // also what lets a PATROL answer the question at all: it earns nothing, so
+    // the old string printed no money at all for it and the screen simply had
+    // no answer to "what has this one made".
+    const char* captainEarned = "";
     bool captainCanStandDown = false; // they have an order to cancel
     bool captainCanRecall = false;    // their hull is parked on this dock, idle
     // Stage C. ⚑ TWO FIELDS RATHER THAN ONE, because the two refusals a
