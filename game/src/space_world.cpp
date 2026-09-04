@@ -25,6 +25,7 @@
 #include <cstring>
 #include <iterator>
 #include <span>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -234,7 +235,7 @@ constexpr std::uint32_t kSaveMagic = 0x37'4c'4f'53u; // "SOL7"
 // captain row, so a v45 reader would run off the end of the roster and into the
 // list of the dead - the version is doing its ordinary job here rather than
 // guarding a meaning, which is the easy case and still the reason it exists.
-constexpr std::uint32_t kSaveVersion = 46;
+constexpr std::uint32_t kSaveVersion = 47;
 
 // ---------------------------------------------------------------------------
 // ⚑⚑⚑⚑ WHAT THE AUTHORED HALF OF THIS GALAXY WAS MADE OF, IN EIGHT BYTES
@@ -420,6 +421,40 @@ const char* pilotRoleName(PilotRole role)
         return "covert";
     }
     return "fighter";
+}
+
+// ⚑⚑⚑⚑ THE SAME JOB FOR A STATE, AND IT REPLACES THREE COPIES OF ONE TABLE
+// (Phase 40 stage D). `traderPuppetInfo`, `hunterInfo` and
+// `collectDuePilotThinks` each carried their own array of state words and each
+// indexed it modulo its own size, so a seventh `PilotState` did not read off
+// the end - it silently came back wearing the FIRST state's name. That is worse
+// than a crash here, because the third of those three is what Lua's
+// `pilot_think` branches on: `PilotState::Formation` would have arrived as
+// "idle", and the patrol branch answers "idle" by picking a new patrol leg -
+// the script pulling a guard out of the slot the C++ had just put it in, twice
+// a second, with nothing anywhere saying so.
+//
+// ⚑ `pilotRoleName`'s own comment is the precedent one function up: the
+// vocabulary lives in one switch so a test can read it rather than list it.
+const char* pilotStateName(PilotState state)
+{
+    switch (state) {
+    case PilotState::Idle:
+        return "idle";
+    case PilotState::Patrol:
+        return "patrol";
+    case PilotState::Attack:
+        return "attack";
+    case PilotState::Flee:
+        return "flee";
+    case PilotState::Travel:
+        return "travel";
+    case PilotState::Inspect:
+        return "inspect";
+    case PilotState::Formation:
+        return "formation";
+    }
+    return "idle";
 }
 
 namespace {
@@ -5247,6 +5282,103 @@ bool SpaceWorld::settleCaptainMineSale(Captain& captain)
     return true;
 }
 
+const char* fleetFormationName(FleetFormation formation)
+{
+    switch (formation) {
+    case FleetFormation::Close:
+        return "close escort";
+    case FleetFormation::Screen:
+        return "wide screen";
+    case FleetFormation::High:
+        return "high guard";
+    }
+    return "close escort";
+}
+
+bool fleetFormationFromName(const char* name, FleetFormation& out)
+{
+    // The first word of each, so the console takes `close`, `screen` and `high`
+    // as well as the whole phrase the Crew tab prints. ⚑ One table, both
+    // readers: a second list of spellings is how a word the screen shows stops
+    // being a word the console takes.
+    if (name == nullptr) {
+        return false;
+    }
+    const std::string_view word{name};
+    if (word == "close" || word == "close escort") {
+        out = FleetFormation::Close;
+        return true;
+    }
+    if (word == "screen" || word == "wide screen" || word == "wide") {
+        out = FleetFormation::Screen;
+        return true;
+    }
+    if (word == "high" || word == "high guard") {
+        out = FleetFormation::High;
+        return true;
+    }
+    return false;
+}
+
+core::DVec3 formationOutward(const core::DVec3& anchorPosition,
+                             const core::DVec3& anchorVelocity,
+                             const core::DVec3& workPosition,
+                             bool hasWork)
+{
+    if (hasWork) {
+        const core::DVec3 fromWork = anchorPosition - workPosition;
+        const double distance = length(fromWork);
+        // Sitting exactly on the work has no direction away from it, which is
+        // `steerOrbit`'s degenerate case one function over and gets its answer:
+        // fall through to the next frame rather than inventing an axis.
+        if (distance > 1.0e-6) {
+            return fromWork * (1.0 / distance);
+        }
+    }
+    const double speed = length(anchorVelocity);
+    if (speed > 1.0) {
+        return anchorVelocity * (1.0 / speed);
+    }
+    // Nothing to read: a fixed axis, and one tick of the anchor moving gives
+    // the next call a real one. `followOffset` makes the same concession.
+    return core::DVec3{0.0, 0.0, 1.0};
+}
+
+core::DVec3 formationSlotOffset(FleetFormation formation, std::uint32_t slot, const core::DVec3& outward)
+{
+    // An orthonormal frame off the one axis that is known to be clear. The 0.9
+    // test is `followOffset`'s and `steerOrbit`'s, for their reason: any axis
+    // not parallel to `outward` spans a plane with it, and the test is what
+    // keeps the cross product from collapsing when they coincide.
+    const core::DVec3 out = outward;
+    const core::DVec3 helper =
+        std::fabs(out.y) < 0.9 ? core::DVec3{0.0, 1.0, 0.0} : core::DVec3{1.0, 0.0, 0.0};
+    const core::DVec3 side = normalize(cross(out, helper));
+    const core::DVec3 up = normalize(cross(side, out));
+
+    // Slots alternate sides and step out by half a range at a time, so the
+    // second pair sits wider than the first instead of on top of it.
+    const double mirror = (slot % 2u) == 0u ? 1.0 : -1.0;
+    const double step = 1.0 + 0.5 * static_cast<double>(slot / 2u);
+
+    switch (formation) {
+    case FleetFormation::Close:
+        // Off the shoulder and a little high. Deliberately not dead astern,
+        // which is `followOffset`'s finding in its own words: astern is the one
+        // place a follower cannot see past the ship it is following, and it is
+        // where the exhaust is.
+        return side * (mirror * kFormationCloseRange * step) + up * (kFormationCloseRange * 0.25);
+    case FleetFormation::Screen:
+        // Out on the open side, between the work and the rest of the system.
+        return out * (kFormationScreenRange * step) + side * (mirror * kFormationScreenRange * 0.3);
+    case FleetFormation::High:
+        // Above it. The one direction a rock never occupies, and the one from
+        // which a hull can see past the thing its fleet is standing behind.
+        return up * (kFormationHighRange * step) + side * (mirror * kFormationHighRange * 0.3);
+    }
+    return side * (mirror * kFormationCloseRange * step);
+}
+
 void SpaceWorld::tickStationaryCaptains(SystemBubble& bubble, double dt)
 {
     if (m_defs == nullptr || m_factionTable.empty() || m_economy.markets().empty() || m_captains.empty()) {
@@ -5324,7 +5456,7 @@ void SpaceWorld::tickStationaryCaptains(SystemBubble& bubble, double dt)
         if (mine.phase == MinePhase::Selling) {
             puppet.destination = dock;
             pilot->waypoint = dock;
-            (void)cruiseCaptainToward(registry, entity, dock, kCaptainDeliverRange * 0.5, dt);
+            (void)cruiseHullToward(registry, entity, dock, kCaptainDeliverRange * 0.5, dt);
             if (length(transform->position - dock) > kCaptainDeliverRange) {
                 continue;
             }
@@ -5472,7 +5604,7 @@ void SpaceWorld::tickStationaryCaptains(SystemBubble& bubble, double dt)
                                                      kMinerRockClearance);
         puppet.destination = hold;
         pilot->waypoint = hold;
-        (void)cruiseCaptainToward(registry, entity, hold, kTraderArrivalRange, dt);
+        (void)cruiseHullToward(registry, entity, hold, kTraderArrivalRange, dt);
         // ⚑⚑⚑ ORE ONLY COMES OUT WHILE THE HULL IS ACTUALLY AT THE ROCK, AND
         // THAT IS WHAT MAKES THE FLYING COST SOMETHING. Without it a captain
         // earns the same whether the field is beside the dock or half a
@@ -5647,7 +5779,7 @@ void SpaceWorld::tickEscortCaptains(SystemBubble& bubble, double dt)
                 // about a day to cross a system.
                 if (const Transform* prey = registry.tryGet<Transform>(registry.entityFromIndex(enemy));
                     prey != nullptr) {
-                    (void)cruiseCaptainToward(registry, entity, prey->position, kCaptainEngageRange, dt);
+                    (void)cruiseHullToward(registry, entity, prey->position, kCaptainEngageRange, dt);
                 }
                 continue;
             }
@@ -5660,7 +5792,7 @@ void SpaceWorld::tickEscortCaptains(SystemBubble& bubble, double dt)
             continue; // in a fight; the steering flies it
         }
         // ⚑⚑ STATION IS KEPT OFF THE PLAYER'S SHIP AND THE STANDOFF IS WHY IT
-        // IS NOT ZERO. `cruiseCaptainToward` stops at `arrival` and hands the
+        // IS NOT ZERO. `cruiseHullToward` stops at `arrival` and hands the
         // hull to its own steering inside that, so an escort settles a few
         // kilometres off rather than trying to occupy the same point as the
         // ship it is flying with - which is `kCaptainDeliverRange`'s job at a
@@ -5671,7 +5803,7 @@ void SpaceWorld::tickEscortCaptains(SystemBubble& bubble, double dt)
         if (pilot->state == PilotState::Idle || pilot->state == PilotState::Patrol) {
             pilot->state = PilotState::Travel;
         }
-        (void)cruiseCaptainToward(registry, entity, station, kCaptainDeliverRange, dt);
+        (void)cruiseHullToward(registry, entity, station, kCaptainDeliverRange, dt);
     }
     for (const ecs::Entity entity : doomed) {
         despawnShip(bubble, entity.index);
@@ -6256,6 +6388,42 @@ void SpaceWorld::retargetHeldBubble(SystemBubble& bubble, double dt)
         if (playerOwnedHull(registry, index) || isPlayerEntity(registry, index)) {
             continue;
         }
+        // ⚑⚑⚑⚑ AND THE CROSSING, WHICH IS THE HALF STAGE C NEVER GAVE THE
+        // RAID IT INVENTED (added in stage D). `rollHeldFleetRaid` puts a hull
+        // at a GATE and `retargetHeldBubble` points it at a captain of the
+        // player's - and then nothing carries it there. Measured: a raider sat
+        // between 688,000 and 877,000 km from its mark, in Travel, at 314 m/s,
+        // for ten thousand seconds of game time, the gap OSCILLATING with the
+        // miner's own commute rather than closing. At that speed the crossing
+        // is about twenty-five days.
+        //
+        // ⚑⚑⚑ IT IS `kCaptainCruiseSpeed`'s OWN PARAGRAPH, POINTED AT THE
+        // OTHER SIDE OF THE FIGHT: *"a field sits 8e7 to 4e8 m out ... and a
+        // hull at a few hundred m/s takes DAYS over it ... 120 coarse haulers
+        // have crossed systems this way since Phase 8x"*. Every captain, every
+        // trader and every miner in this game crosses its system on a pace; the
+        // raid was the one actor expected to fly it, and it could not.
+        //
+        // ⚑⚑ IT WAS INVISIBLE UNTIL THE GUARD STOPPED DOING THE TRAVELLING.
+        // Stage C's exit - "the fight actually happens" - was true, and true
+        // for the wrong reason: the guard's reach was `preyReach`, twice the
+        // gate distance, so it flew SEVEN HUNDRED THOUSAND KILOMETRES out to
+        // meet a raid that was never coming. `kFormationLeash` stops that, and
+        // this is what has to be true instead.
+        //
+        // ⚑ ONLY TOWARD A HULL OF THE PLAYER'S, which is the whole of stage
+        // C's scope: what reopens in a held bubble is the fight the player's
+        // people are in. A raider hunting an ambient trader keeps Phase 38's
+        // bargain, because the coarse economy is already moving that trader
+        // faster than either of them flies.
+        if (pilot.state == PilotState::Travel && pilot.hasTarget != 0 &&
+            playerOwnedHullAt(registry, pilot.targetIndex)) {
+            if (const Transform* mark = registry.storage<Transform>().tryGet(pilot.targetIndex);
+                mark != nullptr) {
+                (void)cruiseHullToward(
+                    registry, registry.entityFromIndex(index), mark->position, kCaptainEngageRange, dt);
+            }
+        }
         pilot.thinkTimer -= static_cast<float>(dt);
         if (pilot.thinkTimer > 0.0f) {
             continue;
@@ -6521,7 +6689,7 @@ bool SpaceWorld::standCaptainDownAt(
             pilot->state = PilotState::Travel;
         }
     }
-    (void)cruiseCaptainToward(registry, entity, pad, kCaptainDeliverRange * 0.5, dt);
+    (void)cruiseHullToward(registry, entity, pad, kCaptainDeliverRange * 0.5, dt);
     if (length(transform->position - pad) > kCaptainDeliverRange) {
         return false; // still on the way in
     }
@@ -6549,6 +6717,66 @@ std::uint32_t SpaceWorld::nearestStationTo(std::uint32_t system, const core::DVe
         if (best == kNoIndex || distance < bestDistance) {
             bestDistance = distance;
             best = i;
+        }
+    }
+    return best;
+}
+
+std::uint32_t SpaceWorld::fleetFormationAnchor(const SystemBubble& bubble,
+                                               std::size_t guardIndex,
+                                               std::uint32_t& outSlot) const
+{
+    outSlot = 0;
+    if (guardIndex >= m_captains.size() || !captainInFleet(guardIndex)) {
+        return kNoIndex;
+    }
+    // ⚑ THE ROOT, WHICH IS `fleetHeldSystem`'s OWN GROUPING AND NOT A SECOND
+    // NOTION OF "SAME FLEET". One level is enforced at `setCaptainCommander`,
+    // so a commander roots at themselves and everybody under them roots at the
+    // commander - one hop, never a walk.
+    const auto rootOf = [&](std::size_t i) {
+        const std::size_t boss = captainCommanderIndex(i);
+        return boss < m_captains.size() ? boss : i;
+    };
+    const std::size_t root = rootOf(guardIndex);
+
+    // Which place in the shape this one takes: the guards of this fleet in
+    // roster order, and this guard's position among them.
+    for (std::size_t i = 0; i < guardIndex; ++i) {
+        if (m_captains[i].order.kind == OrderKind::Patrol && rootOf(i) == root) {
+            ++outSlot;
+        }
+    }
+
+    // And the hull to hold it on: the fleet's miner, by the body that is
+    // actually in this sky. ⚑ ASKED OF THE BUBBLE AND NOT OF THE RECORD, which
+    // is this file's standing rule for a two-representation seam: a captain
+    // whose order says "posted here" but whose puppet has not been spawned yet
+    // is not something a formation can be built around, and the record cannot
+    // tell the difference.
+    const ecs::Registry& registry = bubble.registry;
+    const ecs::Pool<CaptainPuppet>& puppets = registry.storage<CaptainPuppet>();
+    std::uint32_t best = kNoIndex;
+    std::size_t bestCaptain = m_captains.size();
+    for (std::size_t i = 0; i < puppets.size(); ++i) {
+        const CaptainPuppet& puppet = puppets.values()[i];
+        const std::uint32_t index = puppets.entityIndices()[i];
+        if (puppet.captainIndex >= m_captains.size() || puppet.captainIndex == guardIndex) {
+            continue;
+        }
+        if (m_captains[puppet.captainIndex].order.kind != OrderKind::Mine ||
+            rootOf(puppet.captainIndex) != root) {
+            continue;
+        }
+        if (registry.storage<Transform>().tryGet(index) == nullptr) {
+            continue;
+        }
+        // Roster order rather than nearest - a shape whose anchor changes when
+        // two miners drift past each other is one the player cannot photograph
+        // twice, and the roster is the order they hired them in.
+        if (puppet.captainIndex < bestCaptain) {
+            bestCaptain = puppet.captainIndex;
+            best = index;
         }
     }
     return best;
@@ -6598,8 +6826,15 @@ void SpaceWorld::tickPatrolBeat(
     // do NOT watch is priced coarsely instead - see `rollHeldBubbleHazard` -
     // because a fight nobody is looking at should cost a die roll rather than a
     // frame of collision resolution.
-    const std::uint32_t enemy =
-        nearestPlayerEnemy(bubble, transform->position, sim::preyReach(m_galaxyParams.gateDistance));
+    // ⚑⚑⚑⚑ THE SHAPE IS RESOLVED BEFORE THE FIGHT IS, BECAUSE IT IS WHAT
+    // DECIDES HOW FAR THIS ONE WILL GO (Phase 40 stage D). A guard with a
+    // fleet-mate at a rock in this sky has something to stand beside, and
+    // `kFormationLeash` is how far it will leave it; a guard with nobody keeps
+    // the patrol reach and walks the gates, which is what that order is.
+    std::uint32_t slot = 0;
+    const std::uint32_t anchor = fleetFormationAnchor(bubble, puppet.captainIndex, slot);
+    const double reach = anchor != kNoIndex ? kFormationLeash : sim::preyReach(m_galaxyParams.gateDistance);
+    const std::uint32_t enemy = nearestPlayerEnemy(bubble, transform->position, reach);
     if (enemy != kNoIndex) {
         pilot->state = PilotState::Attack;
         pilot->targetIndex = enemy;
@@ -6630,7 +6865,7 @@ void SpaceWorld::tickPatrolBeat(
         // assumptions.
         if (const Transform* prey = registry.tryGet<Transform>(registry.entityFromIndex(enemy));
             prey != nullptr) {
-            (void)cruiseCaptainToward(registry, entity, prey->position, kCaptainEngageRange, dt);
+            (void)cruiseHullToward(registry, entity, prey->position, kCaptainEngageRange, dt);
         }
         return; // inside the handover the steering flies the fight
     }
@@ -6641,7 +6876,75 @@ void SpaceWorld::tickPatrolBeat(
     if (pilot->state == PilotState::Attack) {
         pilot->state = PilotState::Travel;
         pilot->hasTarget = 0;
+        // ⚑ AND THE PIPS COME BACK DOWN WITH IT (stage D). The branch above
+        // shifts a guard to {3,2,1} on the way into a fight and nothing brought
+        // it back out: a patrol that had ever fired stayed on weapons pips for
+        // the rest of the order, running its capacitor hot and regenerating its
+        // shields at the combat rate for the twenty quiet minutes afterwards.
+        // Pre-existing since the beat was written, and it is fixed here because
+        // this is where the guard now stands still long enough for it to cost
+        // something.
+        if (ShipPower* power = registry.tryGet<ShipPower>(entity)) {
+            power->state.pips = pipsForPilot(pilot->state);
+        }
     }
+
+    // ⚑⚑⚑⚑ THE SHAPE (stage D, and it is this stage's whole exit). A guard in a
+    // fleet whose miner is working THIS sky holds a slot on that miner's hull
+    // instead of walking the beat; a guard with no fleet, or whose fleet has
+    // nothing at a rock here, falls through to the beat exactly as before.
+    //
+    // ⚑⚑⚑ IT SITS BELOW THE FIGHT AND ABOVE THE BEAT, WHICH IS THE ORDER THE
+    // THREE THINGS ACTUALLY RANK IN. Something to shoot outranks a station -
+    // that branch returns above, so the guard leaves the slot to fight and is
+    // put back into it by this one on the first tick after the sky is clear,
+    // with no code of its own to bring it home. And the beat is what is left
+    // when there is nothing to cover, which is what keeps `tickPatrolBeat`
+    // whole for a captain who was never in a fleet.
+    if (anchor != kNoIndex) {
+        const Transform& anchorAt = registry.storage<Transform>().get(anchor);
+        const FlightBody* anchorBody = registry.storage<FlightBody>().tryGet(anchor);
+        const CaptainPuppet& anchorPuppet = registry.storage<CaptainPuppet>().get(anchor);
+        // The work, which is what "out" is measured away from - and it is read
+        // off the anchor's BODY (`CaptainPuppet::rock`) rather than off its
+        // record, because `CaptainMine` saves a FIELD and a field has no
+        // position. Between rocks, and on the run in to the dock, there is no
+        // rock and `formationOutward` falls back to the lane it is flying.
+        const Transform* workAt =
+            anchorPuppet.rock != kNoIndex ? registry.storage<Transform>().tryGet(anchorPuppet.rock) : nullptr;
+        const core::DVec3 out = formationOutward(anchorAt.position,
+                                                 anchorBody != nullptr ? anchorBody->velocity : core::DVec3{},
+                                                 workAt != nullptr ? workAt->position : core::DVec3{},
+                                                 workAt != nullptr);
+        const core::DVec3 offset = formationSlotOffset(fleetFormation(puppet.captainIndex), slot, out);
+        const core::DVec3 station = anchorAt.position + offset;
+        puppet.destination = station;
+        pilot->waypoint = station;
+        pilot->formationAnchor = anchor;
+        pilot->formationOffset = offset;
+        // ⚑⚑⚑⚑ THREE LAYERS TO REACH ONE SLOT, AND EACH IS THE ONLY ONE
+        // THAT WORKS AT ITS OWN SCALE - see `kFormationHeldRange`, which was
+        // written after shipping this without the middle one and watching two
+        // captains die. The PACE crosses the playfield: a field sits 8e7 to 4e8
+        // m from the dock a guard spawns at, and no hull flies that in a sane
+        // time. TRAVEL flies the last few kilometres, braking-limited and
+        // obstacle-aware. FORMATION holds the slot, which is the only one of
+        // the three that keeps a hull velocity-matched to something that moves.
+        //
+        // ⚑ The band is what stops the last two flapping: taken up inside
+        // `kFormationHeldRange`, given up only past `kFormationLostRange`.
+        // ⚑ The pace is let go at the slot's own scale rather than a field's -
+        // see `cruiseHullToward`'s `inside`, and the drive that found the 8 km
+        // default leaves a guard permanently on its way to a station it never
+        // reaches.
+        (void)cruiseHullToward(registry, entity, station, kFormationHeldRange, dt, kFormationHeldRange);
+        const double toSlot = length(transform->position - station);
+        const bool holding = pilot->state == PilotState::Formation ? toSlot <= kFormationLostRange
+                                                                   : toSlot <= kFormationHeldRange;
+        pilot->state = holding ? PilotState::Formation : PilotState::Travel;
+        return;
+    }
+    pilot->formationAnchor = kNoIndex;
 
     // ⚑⚑ THE BEAT IS THE DOCK AND THE GATES, AND THE GATES ARE THE POINT.
     // Anything hostile that is not already here arrives through one, so a beat
@@ -6661,14 +6964,18 @@ void SpaceWorld::tickPatrolBeat(
     if (pilot->state == PilotState::Idle || pilot->state == PilotState::Patrol) {
         pilot->state = PilotState::Travel;
     }
-    (void)cruiseCaptainToward(registry, entity, stop, kCaptainDeliverRange, dt);
+    (void)cruiseHullToward(registry, entity, stop, kCaptainDeliverRange, dt);
     if (length(transform->position - stop) <= kCaptainCruiseInside) {
         puppet.beat = (puppet.beat + 1u) % stops;
     }
 }
 
-bool SpaceWorld::cruiseCaptainToward(
-    ecs::Registry& registry, ecs::Entity entity, const core::DVec3& waypoint, double arrival, double dt) const
+bool SpaceWorld::cruiseHullToward(ecs::Registry& registry,
+                                  ecs::Entity entity,
+                                  const core::DVec3& waypoint,
+                                  double arrival,
+                                  double dt,
+                                  double inside) const
 {
     Transform* transform = registry.tryGet<Transform>(entity);
     FlightBody* body = registry.tryGet<FlightBody>(entity);
@@ -6677,8 +6984,8 @@ bool SpaceWorld::cruiseCaptainToward(
     }
     const core::DVec3 lane = waypoint - transform->position;
     const double distance = length(lane);
-    if (distance <= arrival + kCaptainCruiseInside) {
-        return false; // inside a field's own scale; the pilot flies it
+    if (distance <= arrival + inside) {
+        return false; // inside the leg's own scale; the pilot flies it
     }
     const double step = std::min(kCaptainCruiseSpeed * dt, distance - arrival);
     const core::DVec3 point = transform->position + lane * (step / distance);
@@ -6748,6 +7055,25 @@ void SpaceWorld::captainPuppetInfo(std::vector<CaptainPuppetInfo>& out)
         info.paced = puppet.paced != 0;
         info.beat = puppet.beat;
         info.entity = entityIndex;
+        // ⚑⚑⚑ THE SHAPE OFF THE BODY (stage D). Read from the `ShipPilot` this
+        // hull is actually flying under and measured against the anchor's real
+        // position, so "holding the wide screen 1,204 m off Zia Ustinov" is a
+        // statement about two Transforms - which is the difference between
+        // checking the exit and checking that a setting was stored.
+        const ShipPilot* pilot = registry.storage<ShipPilot>().tryGet(entityIndex);
+        info.state = pilot != nullptr ? pilotStateName(pilot->state) : "";
+        if (pilot != nullptr && pilot->state == PilotState::Formation) {
+            if (const Transform* anchorAt = registry.storage<Transform>().tryGet(pilot->formationAnchor);
+                anchorAt != nullptr) {
+                info.formation = fleetFormationName(fleetFormation(puppet.captainIndex));
+                info.formationRange = length(transform.position - anchorAt->position);
+                if (const CaptainPuppet* anchorPuppet =
+                        registry.storage<CaptainPuppet>().tryGet(pilot->formationAnchor);
+                    anchorPuppet != nullptr && anchorPuppet->captainIndex < m_captains.size()) {
+                    info.formationAnchor = m_captains[anchorPuppet->captainIndex].name;
+                }
+            }
+        }
         out.push_back(std::move(info));
     }
 }
@@ -7095,7 +7421,6 @@ bool SpaceWorld::keepTraderOnSchedule(ecs::Registry& registry,
 
 void SpaceWorld::traderPuppetInfo(std::vector<TraderPuppetInfo>& out)
 {
-    static constexpr const char* kStateNames[] = {"idle", "patrol", "attack", "flee", "travel", "inspect"};
     out.clear();
     const core::DVec3 eye = playerRegistry().storage<Transform>().get(playerEntityIndex()).position;
     ecs::Pool<TraderPuppet>& puppets = playerRegistry().storage<TraderPuppet>();
@@ -7111,9 +7436,7 @@ void SpaceWorld::traderPuppetInfo(std::vector<TraderPuppetInfo>& out)
         const FlightBody* body = playerRegistry().storage<FlightBody>().tryGet(entityIndex);
         info.speed = body != nullptr ? length(body->velocity) : 0.0;
         const ShipPilot* pilot = playerRegistry().storage<ShipPilot>().tryGet(entityIndex);
-        info.state = pilot != nullptr
-                         ? kStateNames[static_cast<std::uint32_t>(pilot->state) % std::size(kStateNames)]
-                         : "none";
+        info.state = pilot != nullptr ? pilotStateName(pilot->state) : "none";
         for (const SpawnedShip& spawned : playerShips()) {
             if (spawned.entity.index == entityIndex) {
                 info.name = spawned.name;
@@ -7216,7 +7539,6 @@ bool SpaceWorld::enterSystem(std::uint32_t systemIndex)
 
 void SpaceWorld::hunterInfo(std::vector<HunterInfo>& out)
 {
-    static constexpr const char* kStateNames[] = {"idle", "patrol", "attack", "flee", "travel", "inspect"};
     out.clear();
     const ecs::Pool<ShipPilot>& pilots = playerRegistry().storage<ShipPilot>();
     const ecs::Pool<TraderPuppet>& puppets = playerRegistry().storage<TraderPuppet>();
@@ -7236,7 +7558,7 @@ void SpaceWorld::hunterInfo(std::vector<HunterInfo>& out)
             continue;
         }
         HunterInfo info;
-        info.state = kStateNames[static_cast<std::uint32_t>(pilot.state) % std::size(kStateNames)];
+        info.state = pilotStateName(pilot.state);
         const TraderPuppet* prey = pilot.hasTarget != 0 ? puppets.tryGet(pilot.targetIndex) : nullptr;
         if (prey != nullptr) {
             info.traderIndex = prey->traderIndex;
@@ -10975,6 +11297,50 @@ bool SpaceWorld::standFleetDown(std::size_t commanderIndex, std::string* outErro
     return true;
 }
 
+bool SpaceWorld::setFleetFormation(std::size_t commanderIndex,
+                                   FleetFormation formation,
+                                   std::string* outError)
+{
+    if (commanderIndex >= m_captains.size()) {
+        return refuse("no such captain", outError);
+    }
+    // The third verb said to a commander and the third to send a subordinate to
+    // the same door, in the same words - `orderFleetWork` and `standFleetDown`
+    // are the other two, and one sentence for one rule is what stops three
+    // screens explaining the same refusal three ways.
+    if (const std::size_t boss = captainCommanderIndex(commanderIndex); boss < m_captains.size()) {
+        return refuse("say it to '" + m_captains[boss].name + "', who commands this fleet", outError);
+    }
+    std::vector<std::size_t> members;
+    captainSubordinates(commanderIndex, members);
+    if (members.empty()) {
+        return refuse("'" + m_captains[commanderIndex].name + "' commands nobody", outError);
+    }
+    // ⚑ NOT DOCKED-GATED, for `cancelOrder`'s reason word for word: telling
+    // people where to sit is a message, and a fleet is for being somewhere the
+    // player is not. It also takes effect mid-order - the guard's next tick
+    // reads the new shape and flies to the new slot - which is what makes this
+    // a thing the player can WATCH rather than a thing they set up beforehand.
+    m_captains[commanderIndex].formation = formation;
+    SOL_LOG_INFO("%s's fleet will hold the %s",
+                 m_captains[commanderIndex].name.c_str(),
+                 fleetFormationName(formation));
+    return true;
+}
+
+FleetFormation SpaceWorld::fleetFormation(std::size_t captainIndex) const
+{
+    if (captainIndex >= m_captains.size()) {
+        return FleetFormation::Close;
+    }
+    // Asked of the ROOT. Every captain carries the field because any of them
+    // may become a commander, and exactly one of them is ever read - which is
+    // how the fleet has one shape rather than a copy per member that a `Free`
+    // and a re-form could leave disagreeing.
+    const std::size_t boss = captainCommanderIndex(captainIndex);
+    return m_captains[boss < m_captains.size() ? boss : captainIndex].formation;
+}
+
 sim::TraderRoute SpaceWorld::captainRoute(std::size_t captainIndex) const
 {
     if (captainIndex >= m_captains.size()) {
@@ -12616,6 +12982,12 @@ sim::PowerPips pipsForPilot(PilotState state)
     // shifting to weapons pips would light the target's threat readout on a
     // ship that has come to look at your cargo.
     case PilotState::Inspect:
+    // ⚑ Holding a slot is the balanced case and not the combat one, which is
+    // the difference between a guard and a hull already committed: a fleet's
+    // escort sitting on WEP pips would run its capacitor hot for the twenty
+    // minutes a hold takes to fill, and would go into the fight that eventually
+    // comes with a shield that never had the power to finish regenerating.
+    case PilotState::Formation:
         break;
     }
     return {2, 2, 2};
@@ -13962,7 +14334,6 @@ double SpaceWorld::shipHullFraction(ecs::Entity entity) const
 
 void SpaceWorld::collectDuePilotThinks(double dt, std::vector<PilotThink>& out)
 {
-    static constexpr const char* kStateNames[] = {"idle", "patrol", "attack", "flee", "travel", "inspect"};
 
     // Notice (Phase 36 stage B) rides the same pass and for the same reason:
     // it needs a dt, it needs every pilot visited once, and it is throttled.
@@ -14017,7 +14388,7 @@ void SpaceWorld::collectDuePilotThinks(double dt, std::vector<PilotThink>& out)
         out.push_back({
             .entity = playerRegistry().entityFromIndex(pilots.entityIndices()[i]),
             .role = pilotRoleName(pilot.role),
-            .state = kStateNames[static_cast<std::uint32_t>(pilot.state) % std::size(kStateNames)],
+            .state = pilotStateName(pilot.state),
             .attitude = attitude,
             .pirate =
                 pilot.factionIndex < m_factionTable.size() && m_factionTable[pilot.factionIndex].pirate(),
@@ -14703,6 +15074,37 @@ void SpaceWorld::tickSystem(SystemBubble& bubble, double dt)
                         }
                     }
                 }
+                break;
+            }
+            case PilotState::Formation: {
+                // ⚑⚑⚑⚑ `steerFormation`'s FIRST NON-PLAYER CONSUMER (Phase 40
+                // stage D). Its other three call sites are all inside
+                // `standingCommandInput` - MatchSpeed, Follow and Hold - and
+                // every one of them flies the PLAYER's own hull under a Phase 28
+                // command mode. Nothing the game simulates has ever flown one.
+                //
+                // ⚑⚑⚑ AND THE OFFSET IS ADDED TO THE ANCHOR HERE RATHER THAN
+                // CARRIED AS A POINT, which is the whole reason `ShipPilot`
+                // holds two fields instead of reusing `waypoint`. This runs
+                // every frame and the captain tick that chose the slot runs
+                // once per frame AFTER it; reading a stored point would put the
+                // hull a frame of the anchor's travel behind its station, and
+                // on a paced run to the dock a frame of that travel is
+                // kilometres.
+                const Transform* anchorAt = registry.storage<Transform>().tryGet(pilot.formationAnchor);
+                const FlightBody* anchorBody = registry.storage<FlightBody>().tryGet(pilot.formationAnchor);
+                if (anchorAt == nullptr || anchorBody == nullptr) {
+                    // The hull it was flying beside is gone - killed, stood
+                    // down, or despawned with its bubble. Idle hands it back to
+                    // whoever owns the order, which for a fleet's guard is
+                    // `tickPatrolBeat` and which puts them on the beat again on
+                    // the very next tick.
+                    pilot.state = PilotState::Idle;
+                    pilot.formationAnchor = kNoIndex;
+                    break;
+                }
+                input = sim::steerFormation(
+                    self, control->tuning, anchorAt->position, anchorBody->velocity, pilot.formationOffset);
                 break;
             }
             case PilotState::Flee: {
@@ -16439,6 +16841,10 @@ bool SpaceWorld::saveTo(const char* path, std::string_view displayName)
         // order because it is part of the PERSON: an order is what you told
         // them this week, and a fleet is who they are in.
         writer.write(captain.commander);
+        // The shape their fleet holds (v47). Beside `commander` because it is
+        // part of the fleet rather than part of the order - the shape survives
+        // a stand-down and is what the next order is worked in.
+        writer.write(static_cast<std::uint8_t>(captain.formation));
         // The order (v40), then the haul. Two records because they answer two
         // questions - see `CaptainOrder`.
         //
@@ -16702,11 +17108,21 @@ bool SpaceWorld::loadFrom(const char* path)
     std::vector<std::uint8_t> held(fleetCount, 0u);
     std::uint8_t escorts = 0u;
     for (Captain& captain : captains) {
+        std::uint8_t formation = 0;
         if (!reader.readString(captain.name) || !reader.readString(captain.trade) ||
             !reader.read(captain.who) || !reader.read(captain.ship) || !reader.read(captain.cut) ||
-            !reader.read(captain.commander)) {
+            !reader.read(captain.commander) || !reader.read(formation)) {
             return false;
         }
+        // ⚑ A BYTE OUTSIDE THE VOCABULARY IS REFUSED RATHER THAN CLAMPED
+        // (v47). `OrderKind`'s v42 note is the precedent and its reason: a
+        // value this build has no meaning for is a file this build cannot
+        // read, and taking it silently is how a save written by a later
+        // version half-loads.
+        if (formation > static_cast<std::uint8_t>(FleetFormation::High)) {
+            return false;
+        }
+        captain.formation = static_cast<FleetFormation>(formation);
         std::uint8_t kind = 0;
         std::uint8_t phase = 0;
         std::uint8_t stopping = 0;

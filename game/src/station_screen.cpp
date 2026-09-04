@@ -921,7 +921,12 @@ void buildCrewTab(UiContext& ui, StationPanel& panel, StationScreenState& state,
                            // ONE ABOVE - Phase 40 stage B's fleet order - so
                            // this is six going to SEVEN, which a sum would have
                            // been one term short of again.
-                           listHeight(ui, 7) +
+                           // ⚑⚑ AND EIGHT SINCE STAGE D, which is the second row
+                           // added since the count replaced the sum and the
+                           // second time a sum would have been short. The rows:
+                           // status, Earned, the fleet order, the fleet's
+                           // shape, Work, Patrol, Escort, the floor strip.
+                           listHeight(ui, 8) +
                            listHeight(ui, std::max<std::size_t>(panel.haulDestinations.size(), 1)) +
                            // The fleet section (Phase 40 stage A).
                            listHeight(ui, std::max<std::size_t>(panel.fleetOptions.size(), 1)) +
@@ -1118,6 +1123,30 @@ void buildCrewTab(UiContext& ui, StationPanel& panel, StationScreenState& state,
             }
             if (ui.button(inset(fleetCells.secondary, 2.0f), "Stand", panel.captainCanStandFleetDown)) {
                 panel.action = {.kind = StationAction::Kind::StandFleetDown, .index = panel.selectedCaptain};
+            }
+            ui.popId();
+
+            // ⚑⚑⚑⚑ THE SHAPE THE FLEET HOLDS (Phase 40 stage D), DIRECTLY
+            // UNDER THE ORDER IT IS FLOWN WITH. One button and it CYCLES, which
+            // is `kButtonWidth`'s budget rather than a preference: three shapes
+            // cannot be three buttons in a cell that fits about seven glyphs,
+            // and the row already spends its primary column on the label.
+            //
+            // ⚑⚑ THE NOTE IS THE CONTROL'S ONLY READOUT, so it says the shape
+            // AND what the shape means - "wide screen - 1,200 m out, sees a
+            // raider first" - because a player who has never flown one has no
+            // way to know that the difference is cover against warning. It is
+            // built in the fill, and its longest form is bounded by the three
+            // sentences rather than by anything the player can grow.
+            const Rect shapeRow = column.row(kRowHeight);
+            rowBackground(ui, shapeRow, 3);
+            const CatalogCells shapeCells = catalogCells(ui, shapeRow, false, false);
+            ui.pushId("fleetshape");
+            clipped(ui, shapeCells.name, "Formation", theme.textPrimary);
+            clipped(ui, shapeCells.detail, panel.captainFormationNote, theme.textDim);
+            if (ui.button(inset(shapeCells.primary, 2.0f), "Shape", panel.captainCanSetFormation)) {
+                panel.action = {.kind = StationAction::Kind::CycleFleetFormation,
+                                .index = panel.selectedCaptain};
             }
             ui.popId();
 

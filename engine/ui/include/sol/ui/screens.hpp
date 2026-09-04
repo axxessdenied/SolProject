@@ -866,6 +866,15 @@ struct StationAction
         // a screen that had to say which through a boolean would be a screen
         // with two meanings for one button.
         StandFleetDown,
+        // ⚑⚑⚑ THE SHAPE (Phase 40 stage D), AND IT CARRIES NOTHING EITHER -
+        // IT CYCLES. The screen does not choose which shape comes next; the
+        // world does, from the one it is holding, so the order of the three is
+        // stated once in `FleetFormation` and not again here. That is this
+        // file's standing bargain in the smallest possible form: a screen that
+        // knew the order would be a second copy of the vocabulary, and every
+        // one of those this arc has written has eventually disagreed with the
+        // world about something.
+        CycleFleetFormation,
     };
     Kind kind = Kind::None;
     const char* id = "";    // def id (component/weapon/ship/crew actions)
@@ -961,6 +970,16 @@ struct StationPanel
     bool captainCanOrderFleet = false;
     bool captainCanStandFleetDown = false;
     const char* captainFleetNote = "";
+    // ⚑⚑⚑ THE SHAPE THE FLEET HOLDS (Phase 40 stage D), ON THE SAME PATTERN.
+    // One button that CYCLES rather than three that select, and the reason is
+    // measured: `kButtonWidth` is 78 px less a 2 px inset - about seven glyphs
+    // of the real font, which is what caught "Stand down" running under "Hand
+    // back" in Phase 39 stage E - so three shape labels cannot be three
+    // buttons, and a fourth control on a row that already has two would not
+    // fit at all. The note carries the current shape in full words; the button
+    // says "Shape".
+    bool captainCanSetFormation = false;
+    const char* captainFormationNote = "";
     // The sell floor (stage E). ⚑ `captainOnHaul` is what decides whether the
     // strip is drawn at all, and it is a separate field rather than being
     // inferred from `captainRoute` being non-empty: three of the five order

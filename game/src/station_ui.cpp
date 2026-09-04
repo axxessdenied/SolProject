@@ -717,6 +717,41 @@ void fillStationOutfitting(const SpaceWorld& world,
             panel.captainFleetNote = store(text, fleetWhy);
         }
 
+        // ⚑⚑⚑⚑ THE SHAPE (Phase 40 stage D), AND THE NOTE HAS TO TEACH THE
+        // CONTROL BECAUSE NOTHING ELSE CAN. A player who has never watched a
+        // guard fly one has no way to know that the three shapes trade cover
+        // against warning, and a button labelled "Shape" beside the words
+        // "wide screen" would leave them cycling it to find out. So each shape
+        // says its own distance and what that distance buys - the same
+        // sentence the world's comments carry, in the player's units.
+        //
+        // ⚑⚑ IT IS OFFERED TO A COMMANDER WITH PEOPLE AND NOBODY ELSE, which
+        // is `setFleetFormation`'s own door read back rather than re-derived:
+        // a shape is a thing a fleet holds, and one hull cannot be in one.
+        const bool commandsPeople =
+            !fleetCrew.empty() && world.captainCommanderIndex(index) >= world.captains().size();
+        panel.captainCanSetFormation = commandsPeople;
+        if (commandsPeople) {
+            switch (world.fleetFormation(index)) {
+            case game::FleetFormation::Close:
+                panel.captainFormationNote = "close escort - 250 m off the miner, nothing gets past";
+                break;
+            case game::FleetFormation::Screen:
+                panel.captainFormationNote = "wide screen - 1,200 m out, meets a raider first";
+                break;
+            case game::FleetFormation::High:
+                panel.captainFormationNote = "high guard - 700 m above the work, sees past the rock";
+                break;
+            }
+        } else if (world.captainCommanderIndex(index) < world.captains().size()) {
+            panel.captainFormationNote =
+                store(text,
+                      "'" + world.captains()[world.captainCommanderIndex(index)].name +
+                          "' sets this fleet's shape");
+        } else {
+            panel.captainFormationNote = "they command nobody - no shape to hold";
+        }
+
         // ⚑ The destination list is offered only when an order would actually
         // be taken. `orderHaul` refuses a hull that is not on this dock and one
         // already on a run; both are read above rather than discovered by the
@@ -1370,6 +1405,21 @@ void executeStationAction(SpaceWorld& world, const ui::StationAction& action, in
     case Kind::StandFleetDown:
         if (selectedCaptain >= 0) {
             (void)world.standFleetDown(static_cast<std::size_t>(selectedCaptain));
+        }
+        break;
+    case Kind::CycleFleetFormation:
+        // ⚑⚑ THE ORDER OF THE THREE LIVES IN `FleetFormation` AND THE CYCLE
+        // READS IT, so the screen carries no list of its own. `High` is the
+        // last value, and wrapping there rather than counting is what keeps a
+        // fourth shape from needing an edit in this file as well.
+        if (selectedCaptain >= 0) {
+            const auto now =
+                static_cast<std::uint8_t>(world.fleetFormation(static_cast<std::size_t>(selectedCaptain)));
+            const auto next =
+                static_cast<game::FleetFormation>(now >= static_cast<std::uint8_t>(game::FleetFormation::High)
+                                                      ? 0u
+                                                      : static_cast<std::uint8_t>(now + 1u));
+            (void)world.setFleetFormation(static_cast<std::size_t>(selectedCaptain), next);
         }
         break;
     }

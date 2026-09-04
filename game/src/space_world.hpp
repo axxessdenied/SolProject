@@ -589,7 +589,85 @@ enum class PilotState : std::uint32_t
     // already a uint32 is not. A pilot loaded back in this state with no hold
     // record behind it is put back on its beat by `tickInspection`.
     Inspect,
+    // ⚑⚑⚑⚑ HOLDING A SLOT ON ANOTHER HULL (Phase 40 stage D). The state
+    // `steerFormation` is flown from, and the first thing in this game to fly
+    // it that is not the player's own ship - all three existing call sites are
+    // inside `standingCommandInput`.
+    //
+    // ⚑⚑ A STATE *AND* TWO FIELDS, WHICH IS THE OPPOSITE OF WHAT `Inspect`
+    // ARGUED ONE LINE UP, AND THE DIFFERENCE IS THE VERSION BUMP. That comment
+    // refused a field because it would have been a save-format promise made by
+    // a stage that was not otherwise making one; this stage bumps
+    // `kSaveVersion` for `Captain::formation` regardless, and component 23's
+    // own rule then applies word for word - *"an id promises a LAYOUT and the
+    // save VERSION is what keeps that promise"*. A formation IS an anchor and
+    // an offset; reusing `targetIndex` to mean "who I am flying beside" rather
+    // than "who I am shooting at" would be the cheaper lie, and every reader of
+    // that field would have to learn which one it meant this frame.
+    Formation,
 };
+
+// ⚑⚑⚑ THE SHAPE A FLEET HOLDS AT ITS WORK (Phase 40 stage D). Three, and they
+// differ in the one axis the player can actually judge from a cockpit -
+// distance - which is sized against the guns this game ships rather than
+// chosen for feel: `weapons.toml` runs 800 m (the mining beam), 1,400, 2,500
+// and 3,000. So the close slot is inside every gun in the game, the wide one
+// is still inside two of them, and the difference between them is real cover
+// traded for real warning.
+//
+// ⚑ A `uint8_t` in the save for `OrderKind`'s reason, and the same hazard:
+// the values are a vocabulary, so a reader from before they existed must be
+// refused at the header rather than take a byte it cannot interpret.
+enum class FleetFormation : std::uint8_t
+{
+    // 250 m off the shoulder. Nothing reaches the work without passing the
+    // guard, and the guard has no run-up at all when something does.
+    Close = 0,
+    // 1,200 m out on the open side - the side the work is NOT on, so a slot
+    // is never inside the rock. Meets a raider before it is on the miner; the
+    // miner is alone for the seconds it takes to come back.
+    Screen,
+    // 700 m above the work, which is the one direction a rock never occupies
+    // and the one from which a hull can see past it.
+    High,
+};
+
+// For the Crew tab and the console: the shape said in the words the player
+// picked it by.
+[[nodiscard]] const char* fleetFormationName(FleetFormation formation);
+// The reverse, for `sol.fleet_formation`. False when the word is not one.
+[[nodiscard]] bool fleetFormationFromName(const char* name, FleetFormation& out);
+
+// ⚑⚑⚑⚑ WHICH WAY IS "OUT" FROM THE WORK, WHICH IS THE WHOLE OF WHY A SLOT IS
+// SAFE (stage D). A miner sits at `minerHoldPoint` - `kMinerRockClearance`
+// (600 m) off a rock on the dock's side - and `sim::chooseWorkRock`'s own
+// comment is the hazard: *"Rocks are solid statics and nothing in the game
+// steers around them: `m_obstacles` holds stations and planets only"*, a
+// paragraph that ends in a destroyed freighter. So every slot in every shape is
+// built from THIS axis and its perpendiculars, and none of them is ever `-out`:
+// a formation cannot put a hull inside the rock its fleet is cutting.
+//
+// ⚑ Away from the work while there is work, and along the anchor's own travel
+// when there is not - `followOffset`'s bargain with its two cases swapped,
+// because a hull at a rock is the still case here and the moving one there.
+// ⚑⚑ The DIRECTION of `anchorVelocity` is trustworthy even while the anchor is
+// being paced and its magnitude is not: `cruiseHullToward` writes
+// `body->velocity = lane * (envelope / distance)`, which is the right lane at
+// the wrong speed.
+[[nodiscard]] sol::core::DVec3 formationOutward(const sol::core::DVec3& anchorPosition,
+                                                const sol::core::DVec3& anchorVelocity,
+                                                const sol::core::DVec3& workPosition,
+                                                bool hasWork);
+
+// One slot's world-space offset from its anchor, given that axis. ⚑ `slot` is
+// what makes this a FORMATION rather than a follow position: slots alternate
+// sides and step outward, so a shape stays a shape as a fleet grows. Stage B's
+// composition posts exactly one guard today and the user's ruling this stage is
+// that the count is stage E's question, so slot 0 is the only one the shipped
+// game reaches - the rule is here because a shape with one occupant is not one,
+// and because the cap stage E has to pick is a number of these.
+[[nodiscard]] sol::core::DVec3
+formationSlotOffset(FleetFormation formation, std::uint32_t slot, const sol::core::DVec3& outward);
 
 // An NPC pilot: Lua's pilot_think picks the state (strategy); C++ steering
 // flies it every tick (engine plan §Scripting split).
@@ -619,6 +697,19 @@ struct ShipPilot
     // arrives and finds nothing has to go back to its patrol, where a trader
     // puppet arriving at its pad deliberately holds station instead.
     float respondTimer = 0.0f;
+    // ⚑⚑⚑ THE HULL THIS ONE IS FLYING BESIDE (Phase 40 stage D), as an entity
+    // index in its own bubble, and the world-space offset it holds from it.
+    // Read only in `PilotState::Formation`; `kNoIndex` everywhere else.
+    //
+    // ⚑⚑ THE OFFSET IS STORED RATHER THAN DERIVED FROM `waypoint`, AND THE
+    // ALTERNATIVE DRIFTS BY EXACTLY ONE FRAME OF THE ANCHOR'S MOTION. The
+    // captain tick writes the slot POINT (anchor + offset) using the anchor's
+    // position as it stood when that tick ran; the steering below reads the
+    // anchor a frame later, so `waypoint - anchorPosition` is the offset minus
+    // however far the anchor moved between them. At a rock that is nothing and
+    // on a paced run to the dock it is kilometres.
+    std::uint32_t formationAnchor = 0xffff'ffffu;
+    sol::core::DVec3 formationOffset;
 };
 
 // One trader body, for the console probe that proves the promotion happened.
@@ -712,6 +803,23 @@ struct CaptainPuppetInfo
     // body" cannot see, and the defect it exists to catch is real: an escort
     // was being rebuilt every tick and every such probe read it as working.
     std::uint32_t entity = 0;
+    // ⚑⚑⚑ THE SHAPE THIS HULL IS ACTUALLY HOLDING, OFF THE BODY (stage D), and
+    // the whole of how the stage's exit is checked: "a fleet at a rock holds a
+    // shape you can see" is a claim about two hulls' positions, and a probe
+    // that reported the commander's chosen `FleetFormation` would answer it out
+    // of the record - which is the one thing this file's probes are written not
+    // to do. Empty when this hull is not flying one.
+    // ⚑⚑ WHAT THE BODY IS DOING, WHICH IS THE ONE THING THIS PROBE COULD NOT
+    // SAY AND THE DRIVE NEEDED FIRST (stage D). `beat` and `entity` are already
+    // here for the same reason - a probe that reports the RECORD cannot tell a
+    // captain flying its order from one whose pilot has been sent somewhere
+    // else - and the state is the field that says which.
+    const char* state = "";
+    const char* formation = "";
+    // Metres from the hull it is holding on, and who that is. `range` is what
+    // separates "in the slot" from "on its way to it".
+    double formationRange = 0.0;
+    std::string formationAnchor;
 };
 
 // ⚑⚑⚑⚑ "IS THIS SHIP MINE", ASKED OF THE THING (Phase 39 stage D). This is the
@@ -918,6 +1026,11 @@ factionRoster(const GameFaction& faction, sol::assets::RosterCell cell, sol::ass
 // definition: `pilot_think` branches on this STRING with no else clause, so a
 // role missing from the script is a pilot that never acts.
 [[nodiscard]] const char* pilotRoleName(PilotRole role);
+
+// And what Lua calls a pilot's current decision. ⚑ One switch rather than the
+// three separate word tables this replaced, each of which wrapped a state it
+// had no word for round to "idle" - see the definition.
+[[nodiscard]] const char* pilotStateName(PilotState state);
 
 // --- Response (Phase 30 stage C) -------------------------------------------
 //
@@ -1504,7 +1617,7 @@ inline constexpr double kCaptainCruiseSpeed = 4.0e8 / 90.0;
 inline constexpr double kCaptainCruiseInside = 8.0e3;
 
 // ⚑⚑ WHERE A CAPTAIN UNDER A COMBAT ORDER STOPS CRUISING AND STARTS FIGHTING
-// (stage D). `cruiseCaptainToward` hands over at `arrival + kCaptainCruiseInside`,
+// (stage D). `cruiseHullToward` hands over at `arrival + kCaptainCruiseInside`,
 // so this is a 10 km run-in on the combat drive - close enough that the fight
 // starts promptly, far enough that a hull does not arrive already inside its own
 // guns' geometry. ⚑ It exists because the first cut had no run-in at all, and a
@@ -1512,6 +1625,73 @@ inline constexpr double kCaptainCruiseInside = 8.0e3;
 // so a patrol that locks on across a system closes at about 300 m/s against a
 // `preyReach` of hundreds of thousands of kilometres.
 inline constexpr double kCaptainEngageRange = 2.0e3;
+// ⚑⚑⚑⚑ THE THREE SLOT DISTANCES (stage D), AND THE ONE THING THEY ARE ALL
+// MEASURED AGAINST IS `weapons.toml`. The guns this game ships reach 800 m (the
+// mining beam), 1,400, 2,500 and 3,000, so a guard 250 m off its miner is
+// inside every one of them, a guard 1,200 m out is inside two, and the choice
+// between them is cover traded for warning rather than a decoration. ⚑ All
+// three are far below `kCaptainCruiseInside` (8 km), which is the answer to the
+// phase spec's risk 5: outside that distance the hulls are position-written by
+// the pace and a formation there is a fiction nobody can photograph.
+inline constexpr double kFormationCloseRange = 250.0;
+inline constexpr double kFormationScreenRange = 1.2e3;
+inline constexpr double kFormationHighRange = 700.0;
+// ⚑⚑⚑⚑ WHERE THE RUN-IN ENDS AND THE HOLD BEGINS, AND IT EXISTS BECAUSE
+// `steerFormation` HAS NEVER HAD TO *CLOSE* ON A SLOT. All three of its
+// existing call sites are Phase 28 command modes - MatchSpeed, Follow, Hold -
+// and every one of them is given by a player already flying alongside the thing
+// they are forming on. So the function is a HOLD and not an approach: its
+// desired velocity is `(slot - position) * 0.5` clamped to `maxSpeed`, with no
+// braking term at all, which means from eight kilometres out it commands full
+// throttle and only starts easing off inside `2 * maxSpeed` metres - far inside
+// its own stopping distance.
+//
+// ⚑⚑⚑ MEASURED, BY SHIPPING IT WRONG FIRST. Flown that way the guard
+// overshot and orbited its slot at about 1,400 m whatever shape it had been
+// given (so the three shapes read as one), and the fleet lost two captains to
+// collision damage on the way in - `sim::chooseWorkRock`'s hazard exactly, with
+// nothing steering round a rock and now nothing braking either. The fourth time
+// in two phases that a rule borrowed from a neighbouring system arrived
+// carrying its endpoints' assumptions.
+//
+// ⚑⚑ SO THE APPROACH IS `steerTravel`'s AND THE HOLD IS `steerFormation`'s,
+// which is the same division of labour `kCaptainEngageRange` makes for a fight
+// one order along. Travel is braking-limited AND obstacle-aware; formation
+// keeps a hull velocity-matched to a moving anchor, which Travel cannot do
+// because it stops at a fixed point. Each does the half it is written for.
+//
+// ⚑ TWO NUMBERS AND NOT ONE, so the hull does not flap between them on a
+// metre of drift: it takes station inside `kFormationHeldRange` and gives it up
+// only past `kFormationLostRange`. The enter figure is `kTraderArrivalRange`
+// rather than a number of its own - that is already this file's answer to
+// "close enough to a point in space to have arrived at it", and it is the same
+// bubble `steerTravel` brakes into, so the hull arrives slow by construction.
+inline constexpr double kFormationHeldRange = kTraderArrivalRange;
+inline constexpr double kFormationLostRange = kTraderArrivalRange * 3.0;
+// ⚑⚑⚑⚑ HOW FAR A FLEET'S GUARD WILL LEAVE ITS CHARGE TO FIGHT, AND IT IS
+// `preyReach` REFUSED FOR THE THIRD TIME IN TWO PHASES. That bound is twice the
+// gate distance - hundreds of thousands of kilometres - and it is right for a
+// HUNTER, whose own comment says so: it exists to refuse "a lock that geometry
+// already made impossible". Stage C then found it wrong for KEEPING a chase,
+// and this is the third face of the same coin: it is wrong for a guard that has
+// something to stand next to.
+//
+// ⚑⚑⚑ MEASURED, AND THE FAILURE IS NOT THE ONE ANYBODY WOULD GUESS. The
+// first cut let a fleet's guard chase on the patrol reach, and it flew 600,000
+// km across the system after a raider and hit a PLANET at 164 m/s - `entity 81
+// (state attack) hit static r=44711203 m`, with the nearest rock 50,000 km
+// behind it. A Shuttle has 100 hull and that impact was 267 damage. The miner
+// it had been guarding was shot a minute later, undefended. Two captains lost
+// to one lock.
+//
+// ⚑⚑ SO THE NUMBER IS THE ONE THE GUARD CAN REACH WITHOUT CRUISING:
+// `cruiseHullToward` hands a hull to its own steering at `arrival +
+// kCaptainCruiseInside`, so this is exactly the fight a guard can flyeither way
+// on its combat drive. Anything further is not a threat to the thing it is
+// standing beside - it is a chase, and a chase is what leaves the miner alone.
+// ⚑ A patrol with no fleet keeps the old reach: walking the gates is what that
+// order is, and there is nothing behind it to abandon.
+inline constexpr double kFormationLeash = kCaptainEngageRange + kCaptainCruiseInside;
 // How long an outpost's draw stops after its miner is killed (Phase 8x stage
 // 6). ⚑ Not picked: traderLegSeconds is the economy's own figure for crossing
 // a system, which is exactly what a replacement has to fly. Killing the ship
@@ -1931,6 +2111,15 @@ struct Captain
     // is where that is checked and the loader re-checks it, because a state the
     // game cannot PRODUCE is a state it will not ACCEPT.
     std::uint64_t commander = kNoCommander;
+
+    // ⚑⚑⚑ THE SHAPE THEIR FLEET HOLDS (Phase 40 stage D), AND IT IS ON THE
+    // COMMANDER BECAUSE A SHAPE IS A PROPERTY OF THE GROUP RATHER THAN OF A
+    // PERSON. Read through the same root `fleetHeldSystem` groups by, so a
+    // subordinate's own copy is never consulted and can never disagree - which
+    // is `Captain::ship`'s one-direction rule applied to a fact instead of to a
+    // relation. Every captain carries the field because every captain may
+    // become a commander; only a root's is ever read.
+    FleetFormation formation = FleetFormation::Close;
 
     // What you told them, and what they are doing about it (stage B), plus the
     // stationary half of the same question (stage C). Exactly one of `haul` and
@@ -2874,6 +3063,34 @@ public:
     // order, so each of them gets the courtesy they already had: a laden hauler
     // finishes its leg and a miner brings the load in.
     bool standFleetDown(std::size_t commanderIndex, std::string* outError = nullptr);
+
+    // --- The formation (Phase 40 stage D) -----------------------------------
+    //
+    // ⚑⚑⚑⚑ THE SHAPE IS SET ON A COMMANDER AND FLOWN BY THEIR GUARD, AND THE
+    // EXIT SENTENCE IS WHERE IT IS FLOWN: *at a rock*. A fleet's patrol captain
+    // drops `tickPatrolBeat`'s dock-and-gates walk while the fleet has a miner
+    // working this system, and holds a slot on that miner's hull instead - so
+    // cover follows the people rather than the geography, and the shape moves
+    // with the work, including the run in to the dock when a hold fills.
+    //
+    // ⚑⚑⚑ IT DOES NOT COST THE BEAT'S REASON FOR EXISTING. That function's own
+    // sentence is *"anything hostile that is not already here arrives through
+    // one, so a beat that walks them is the difference between a guard and an
+    // ornament"* - and the interception does not come from standing at the
+    // gate, it comes from `nearestPlayerEnemy` at `preyReach` (twice the gate
+    // distance), which sees the whole sky from the rock exactly as it does from
+    // a gate. What the beat buys that a slot does not is being nearer the gate
+    // when something comes through; what the slot buys is being ON the thing
+    // that is worth taking. A captain with no fleet still walks the beat.
+    //
+    // Refuses a captain who commands nobody, because a shape with one hull in
+    // it is a setting that could never be seen.
+    bool
+    setFleetFormation(std::size_t commanderIndex, FleetFormation formation, std::string* outError = nullptr);
+    // The shape this captain's FLEET holds - asked of the root, so a
+    // subordinate answers with their commander's choice rather than with the
+    // copy sitting unread on their own record.
+    [[nodiscard]] FleetFormation fleetFormation(std::size_t captainIndex) const;
 
     // ⚑⚑⚑⚑ WHERE A CAPTAIN IS, THROUGH THE SAME DECOMPOSITION THE COARSE FLEET
     // USES (`sim::routeOf`). `TraderLeg::None` means parked; a `system` of
@@ -5284,6 +5501,21 @@ private:
                         CaptainPuppet& puppet,
                         const Captain& captain,
                         double dt);
+    // ⚑⚑⚑ THE HULL A FLEET'S GUARD FORMS ON, IN THIS BUBBLE (Phase 40 stage
+    // D): the fleet-mate under a mining order whose body is here, in roster
+    // order. `kNoIndex` when there is none, which is what puts the guard back
+    // on the beat - a fleet whose miner has been stood down, killed or has
+    // never spawned is a fleet with nothing at a rock to hold a shape around.
+    //
+    // ⚑ ROSTER ORDER AND NOT NEAREST, because a shape that changes anchor when
+    // two miners drift past each other is one the player cannot photograph
+    // twice. It is also this file's standing tie-break: the order the player
+    // hired them in.
+    // ⚑ `outSlot` is which place in the shape this guard takes, counted over
+    // the fleet's patrol captains in roster order - so the rule is written once
+    // for a fleet of any size even though stage B's composition posts one.
+    [[nodiscard]] std::uint32_t
+    fleetFormationAnchor(const SystemBubble& bubble, std::size_t guardIndex, std::uint32_t& outSlot) const;
     // The nearest live hull in `bubble` that is hostile TO THE PLAYER, within
     // `reach`, skipping the player and everything the player owns. `kNoIndex`
     // for an empty sky (stage D).
@@ -5437,20 +5669,48 @@ private:
     // `tickCaptains` rather than from the bubble loop, because a bubble that
     // does not exist yet cannot be iterated to.
     void openStationaryCaptainBubbles();
-    // Moves a stationary captain's hull along its crossing at the coarse
-    // fleet's own in-system speed, and lets go near the end so the arrival is
-    // flown. Returns true when it wrote the position - which is the same
-    // contract `keepTraderOnSchedule` has, against a body that IS the record
-    // rather than a view of one.
+    // Moves a hull along its crossing at the coarse fleet's own in-system
+    // speed, and lets go near the end so the arrival is flown. Returns true
+    // when it wrote the position - which is the same contract
+    // `keepTraderOnSchedule` has, against a body that IS the record rather than
+    // a view of one.
     // `arrival` is how near the waypoint the pace puts the hull down, and it
     // differs by leg rather than being one number: a rock is arrived AT
     // (`kTraderArrivalRange`, because the last kilometre into a field is what
     // kills a hull), a station is arrived NEAR.
-    bool cruiseCaptainToward(sol::ecs::Registry& registry,
-                             sol::ecs::Entity entity,
-                             const sol::core::DVec3& waypoint,
-                             double arrival,
-                             double dt) const;
+    //
+    // ⚑⚑ IT WAS `cruiseCaptainToward` UNTIL PHASE 40 STAGE D, and the rename
+    // is not tidying: `retargetHeldBubble` now paces a RAIDER with it, and a
+    // function whose name says "captain" while it moves somebody else's hull is
+    // the class of lie this arc has already paid for once - `gunneryFrame` took
+    // a registry and read `playerRegistry()` anyway. Nothing in the body ever
+    // knew what it was moving.
+    //
+    // ⚑⚑⚑⚑ `inside` IS HOW MUCH OF THE APPROACH THE HULL FLIES ITSELF, AND
+    // IT IS A PARAMETER BECAUSE A FORMATION SLOT IS NOT A ROCK (stage D).
+    // `kCaptainCruiseInside` is 8 km and its reason is written down at the
+    // constant: the last ten kilometres into an asteroid field is the one
+    // stretch of space a hull cannot be trusted to cross, so the pace lets go
+    // early and the pilot flies it. A slot is the opposite case - it is a point
+    // beside a hull that is ALREADY standing safely at its own cleared hold
+    // point, and `minerHoldPoint` did that clearance.
+    //
+    // ⚑⚑⚑ AND THE 8 km DEFAULT MADE THE SHAPE UNREACHABLE IN PLAY, WHICH ONLY
+    // A DRIVE COULD SHOW. Sampled about thirty times across several minutes of
+    // a live three-role fleet, the guard was in `travel` every single time and
+    // sat a near-constant 79 km behind its miner. Two things compound: while
+    // the miner is on its commute BOTH hulls are paced at exactly
+    // `kCaptainCruiseSpeed`, so the gap is frozen for the whole crossing; and
+    // the window where the miner is not paced is barely longer than the 8 km
+    // run-in takes at a Shuttle's 220 m/s. The suite could not see it - a test
+    // polls for thousands of ticks and eventually catches the one cycle that
+    // works, and a player watches a guard that is always on its way.
+    bool cruiseHullToward(sol::ecs::Registry& registry,
+                          sol::ecs::Entity entity,
+                          const sol::core::DVec3& waypoint,
+                          double arrival,
+                          double dt,
+                          double inside = kCaptainCruiseInside) const;
     // Sells a mined hold into the market the order named and books it exactly
     // as `settleCaptainSale` books a haul. ⚑⚑ THE CUT NEEDED NO SPECIAL CASE
     // FOR MINING AND THAT IS WORTH SAYING: ruling 6 takes a cut of the PROFIT,

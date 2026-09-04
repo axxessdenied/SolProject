@@ -4103,3 +4103,413 @@ SOL_TEST(a_fight_nobody_watches_breaks_off_where_a_watched_one_does)
         SOL_CHECK(script.find(needle, at + 1) == std::string::npos);
     }
 }
+
+// --- The formation (Phase 40 stage D) ----------------------------------------
+//
+// ⚑⚑⚑⚑ THE CLAIM THESE TESTS EXIST FOR IS THAT TWO HULLS OF THE PLAYER'S HOLD A
+// GEOMETRY, AND IT IS EASY TO SATISFY DISHONESTLY. "The guard is in
+// `PilotState::Formation`" is satisfied by a hull that never moved; "the shape
+// was stored" is satisfied by a setter with nothing reading it; and both are
+// satisfied by a fleet whose guard is near the miner because they were spawned
+// at the same dock. So what is asserted is the DISTANCE between two bodies
+// after they have flown, that it CHANGES when the player picks a different
+// shape, and that taking the guard out of the fleet puts it back on the beat.
+
+// The three shapes and the ranges their slots put a guard at. ⚑ Written down
+// here rather than read from the world: a test that computed the expected
+// number the way the world does would agree with a bug.
+struct ShapeCase
+{
+    game::FleetFormation shape;
+    const char* name;
+    double nominal; // metres from the anchor, |offset| for slot 0
+};
+
+// |side * 250 + up * 62.5|, |out * 1200 + side * 360|, |up * 700 + side * 210|.
+const ShapeCase kShapes[] = {
+    {game::FleetFormation::Close, "close escort", 257.7},
+    {game::FleetFormation::Screen, "wide screen", 1252.8},
+    {game::FleetFormation::High, "high guard", 730.8},
+};
+
+// ⚑⚑⚑ NO SLOT MAY SIT BETWEEN THE HULL AND THE ROCK, AND THIS IS THE ONE CLAIM
+// IN THE STAGE THAT CAN BE CHECKED WITHOUT FLYING ANYTHING. `chooseWorkRock`
+// wrote the hazard down in its own comment - "Rocks are solid statics and
+// nothing in the game steers around them: `m_obstacles` holds stations and
+// planets only" - and that paragraph ends in a destroyed freighter. A formation
+// is the first thing in this game that puts a hull at an authored point beside
+// a rock, so the geometry has to be UNABLE to aim inward rather than merely
+// happen not to.
+SOL_TEST(no_slot_in_any_shape_is_ever_aimed_at_the_rock)
+{
+    // Including the axes that make the frame's cross product degenerate -
+    // straight up, which is the case the 0.9 test in `formationSlotOffset`
+    // exists for, and straight down, which is the same case mirrored.
+    const sol::core::DVec3 axes[] = {
+        {0.0, 0.0, 1.0},
+        {1.0, 0.0, 0.0},
+        {0.0, 1.0, 0.0},
+        {0.0, -1.0, 0.0},
+        normalize(sol::core::DVec3{0.3, -0.9, 0.32}),
+    };
+    for (const sol::core::DVec3& out : axes) {
+        for (const ShapeCase& shape : kShapes) {
+            for (std::uint32_t slot = 0; slot < 4; ++slot) {
+                const sol::core::DVec3 offset = game::formationSlotOffset(shape.shape, slot, out);
+                const double inward = dot(offset, out);
+                const double range = length(offset);
+                SOL_CHECK(inward >= -1.0e-9);
+                SOL_CHECK(range > 1.0);
+                // ⚑ AND FINITE, which the degenerate axes are what threaten: a
+                // collapsed cross product normalises to NaN, and a NaN slot is a
+                // hull that flies nowhere for the rest of the session.
+                SOL_CHECK(range == range);
+            }
+            // ⚑⚑ SLOTS ALTERNATE SIDES, which is what makes this a FORMATION
+            // rather than one follow position said three ways. Slot 1 is slot 0
+            // mirrored, so no two hulls are ever sent to one point.
+            const sol::core::DVec3 first = game::formationSlotOffset(shape.shape, 0, out);
+            const sol::core::DVec3 second = game::formationSlotOffset(shape.shape, 1, out);
+            SOL_CHECK(length(first - second) > 1.0);
+            std::printf("  %s on (%.1f,%.1f,%.1f): slot 0 at %.0f m, slot 1 %.0f m away\n",
+                        shape.name,
+                        out.x,
+                        out.y,
+                        out.z,
+                        length(first),
+                        length(first - second));
+        }
+    }
+
+    // The three shapes are three DISTANCES, which is the axis a player can
+    // judge from a cockpit - and the one the note under the button promises.
+    const sol::core::DVec3 out{0.0, 0.0, 1.0};
+    const double close = length(game::formationSlotOffset(game::FleetFormation::Close, 0, out));
+    const double screen = length(game::formationSlotOffset(game::FleetFormation::Screen, 0, out));
+    const double high = length(game::formationSlotOffset(game::FleetFormation::High, 0, out));
+    std::printf("  close %.0f m < high %.0f m < screen %.0f m\n", close, high, screen);
+    SOL_CHECK(close < high);
+    SOL_CHECK(high < screen);
+}
+
+// ⚑⚑ WHICH WAY IS "OUT" HAS THREE ANSWERS AND THE ORDER THEY ARE TRIED IN IS
+// THE WHOLE RULE. A miner at a rock is still, so its velocity says nothing and
+// the rock is the only frame there is; a miner running a load in has no rock in
+// hand and its lane is the frame; and a hull that is neither still has to get a
+// finite axis rather than a division by zero.
+SOL_TEST(the_axis_a_shape_is_built_on_prefers_the_work_then_the_lane)
+{
+    const sol::core::DVec3 at{0.0, 0.0, 0.0};
+    const sol::core::DVec3 rock{0.0, 0.0, -600.0};
+    // At the rock and stationary: out is away from the rock.
+    const sol::core::DVec3 fromRock = game::formationOutward(at, {}, rock, true);
+    SOL_CHECK(dot(fromRock, sol::core::DVec3{0.0, 0.0, 1.0}) > 0.99);
+    // ⚑⚑ AND THE ROCK BEATS THE LANE RATHER THAN THE OTHER WAY ROUND, which is
+    // the case that matters: a miner hopping between rocks has BOTH, and taking
+    // the lane there would swing the whole shape through the field on every hop.
+    const sol::core::DVec3 both = game::formationOutward(at, {0.0, 900.0, 0.0}, rock, true);
+    SOL_CHECK(dot(both, sol::core::DVec3{0.0, 0.0, 1.0}) > 0.99);
+    // No rock: the lane it is flying, which is right for the run in to the dock.
+    const sol::core::DVec3 lane = game::formationOutward(at, {0.0, 900.0, 0.0}, {}, false);
+    SOL_CHECK(dot(lane, sol::core::DVec3{0.0, 1.0, 0.0}) > 0.99);
+    // Neither, and sitting exactly on the work: a unit axis, not a zero and not
+    // a NaN. Both of those are a hull with no slot to fly to.
+    const sol::core::DVec3 degenerate[] = {game::formationOutward(at, {}, {}, false),
+                                           game::formationOutward(at, {}, at, true)};
+    for (const sol::core::DVec3& axis : degenerate) {
+        const double magnitude = length(axis);
+        SOL_CHECK(magnitude > 0.99 && magnitude < 1.01);
+    }
+    std::printf("  work beats lane beats a fixed axis, and none of them is zero\n");
+}
+
+// ⚑⚑⚑⚑ THE STAGE EXIT: A FLEET AT A ROCK HOLDS A SHAPE, AND IT IS THE SHAPE THE
+// PLAYER CHOSE. The two halves are in one test because each is satisfiable
+// alone - a guard that never left the dock is "near the miner" while the miner
+// is still there too, and a shape that is stored but never flown passes any
+// check made of the record. So this waits for the bodies to be IN the geometry,
+// then changes the geometry and waits for them to be in the new one.
+SOL_TEST(a_fleets_guard_holds_the_shape_the_player_chose_at_the_rock)
+{
+    Fixture fixture;
+    const Dock dock = findMiningDock(fixture);
+    SOL_REQUIRE(dock.system != kNone);
+    SOL_REQUIRE(fixture.walkIn(dock));
+    SpaceWorld& w = fixture.world();
+
+    const ThreeRoles roles = buildThreeRoleFleet(fixture);
+    SOL_REQUIRE(roles.commander != kNone);
+    w.addCredits(1'000'000.0);
+    SOL_REQUIRE(w.buyMarketIntel());
+    SOL_REQUIRE(w.orderFleetWork(roles.commander));
+    SOL_REQUIRE(w.captains()[roles.miner].order.kind == game::OrderKind::Mine);
+    SOL_REQUIRE(w.captains()[roles.guard].order.kind == game::OrderKind::Patrol);
+
+    std::vector<game::CaptainPuppetInfo> bodies;
+    const auto bodyOf = [&](std::size_t captain) {
+        w.captainPuppetInfo(bodies);
+        for (const game::CaptainPuppetInfo& body : bodies) {
+            if (body.captainIndex == captain) {
+                return body;
+            }
+        }
+        return game::CaptainPuppetInfo{};
+    };
+    // ⚑⚑ MEASURED OFF THE BODIES AND NOT OFF THE RECORD, which is this file's
+    // standing rule for a two-representation seam and is the whole content of
+    // the exit: "a shape you can see" is a claim about two Transforms.
+    const auto settled = [&](const ShapeCase& shape) {
+        return runUntil(
+            w,
+            [&] {
+                const game::CaptainPuppetInfo body = bodyOf(roles.guard);
+                return std::string(body.formation) == shape.name &&
+                       body.formationRange < shape.nominal * 2.0 && body.formationRange > shape.nominal * 0.4;
+            },
+            8000);
+    };
+
+    // Close is the default, so the first wait is also the assertion that a
+    // fleet given no instruction at all still holds something.
+    SOL_REQUIRE(settled(kShapes[0]));
+    const game::CaptainPuppetInfo held = bodyOf(roles.guard);
+    std::printf("  %s is holding the %s, %.0f m off %s\n",
+                w.captains()[roles.guard].name.c_str(),
+                held.formation,
+                held.formationRange,
+                held.formationAnchor.c_str());
+    // ⚑ THE ANCHOR IS THE MINER BY NAME, not merely "some hull nearby" - a
+    // guard that had formed on the commander's hauler would pass a distance
+    // check on the tick the fleet left the pad and still fail the exit.
+    SOL_CHECK(held.formationAnchor == w.captains()[roles.miner].name);
+
+    // ⚑⚑⚑ AND NOW THE PLAYER CHANGES THEIR MIND, WHICH IS THE HALF THAT CANNOT
+    // BE FAKED BY A HULL SITTING STILL. Each shape is a different distance, so
+    // three settles at three ranges are three flights.
+    double previous = held.formationRange;
+    for (std::size_t i = 1; i < std::size(kShapes); ++i) {
+        SOL_REQUIRE(w.setFleetFormation(roles.commander, kShapes[i].shape));
+        SOL_REQUIRE(settled(kShapes[i]));
+        const double now = bodyOf(roles.guard).formationRange;
+        std::printf("  told the %s: %.0f m -> %.0f m off the miner\n", kShapes[i].name, previous, now);
+        SOL_CHECK(std::abs(now - previous) > 100.0);
+        previous = now;
+    }
+
+    // ⚑⚑⚑⚑ THE ANTI-VACUITY HALF, AND IT IS WHAT SAYS THE SHAPE COMES FROM THE
+    // FLEET. Take the guard out of it and they are a lone patrol captain again:
+    // `tickPatrolBeat`'s beat is what they go back to, and the beat is the dock
+    // and the gates, which are a playfield apart. Without this the whole stage
+    // would pass on a guard that flew a slot for any reason at all.
+    SOL_REQUIRE(w.clearCaptainCommander(roles.guard));
+    SOL_REQUIRE(runUntil(w, [&] { return bodyOf(roles.guard).formation[0] == '\0'; }, 200));
+    const double apart = [&] {
+        (void)runUntil(w, [&] { return false; }, 400);
+        std::vector<game::CaptainPuppetInfo> after;
+        w.captainPuppetInfo(after);
+        sol::core::DVec3 guardAt{};
+        sol::core::DVec3 minerAt{};
+        for (const game::CaptainPuppetInfo& body : after) {
+            if (body.captainIndex == roles.guard) {
+                guardAt = {body.distance, 0.0, 0.0};
+            }
+            if (body.captainIndex == roles.miner) {
+                minerAt = {body.distance, 0.0, 0.0};
+            }
+        }
+        return std::abs(guardAt.x - minerAt.x);
+    }();
+    std::printf("  out of the fleet: no shape, and %.0f km between the two hulls\n", apart / 1000.0);
+    SOL_CHECK(bodyOf(roles.guard).formation[0] == '\0');
+}
+
+// ⚑⚑⚑ THE SHAPE IS A PROPERTY OF THE FLEET, WHICH IS THREE CLAIMS AT ONCE: a
+// commander sets it, a subordinate reads the SAME answer rather than their own
+// copy, and somebody who commands nobody cannot be given one at all. The middle
+// one is the one worth a test - every captain carries the field, so a reader
+// that took the captain's own copy would be right for the commander and
+// silently wrong for everybody under them.
+SOL_TEST(a_shape_belongs_to_the_fleet_and_a_subordinate_reads_their_commanders)
+{
+    Fixture fixture;
+    const Dock dock = fixture.findDock(screenBit(StationScreen::Crew));
+    SOL_REQUIRE(dock.system != kNone);
+    SOL_REQUIRE(fixture.walkIn(dock));
+    SpaceWorld& w = fixture.world();
+
+    SOL_REQUIRE(w.hireCaptain(0));
+    SOL_REQUIRE(w.hireCaptain(0));
+    SOL_REQUIRE(w.captains().size() == 2);
+
+    std::string why;
+    SOL_CHECK(!w.setFleetFormation(0, game::FleetFormation::Screen, &why));
+    std::printf("  a captain who commands nobody: \"%s\"\n", why.c_str());
+    SOL_CHECK(why.find("commands nobody") != std::string::npos);
+
+    SOL_REQUIRE(w.setCaptainCommander(1, 0));
+    SOL_REQUIRE(w.setFleetFormation(0, game::FleetFormation::Screen));
+    SOL_CHECK(w.fleetFormation(0) == game::FleetFormation::Screen);
+    SOL_CHECK(w.fleetFormation(1) == game::FleetFormation::Screen);
+    // ⚑ The subordinate's own field is untouched, which is what makes the read
+    // above a resolution rather than a copy that happens to agree.
+    SOL_CHECK(w.captains()[1].formation == game::FleetFormation::Close);
+
+    why.clear();
+    SOL_CHECK(!w.setFleetFormation(1, game::FleetFormation::High, &why));
+    std::printf("  a subordinate is sent to the commander: \"%s\"\n", why.c_str());
+    SOL_CHECK(why.find(w.captains()[0].name) != std::string::npos);
+
+    // And it survives the disk (v47). ⚑ THE ROSTER IS BOUNDED BY THE GALAXY'S
+    // CREW-HALL SEATS RATHER THAN BY THE HULL COUNT since stage A, so two
+    // captains with no ships is a save the game can still open - the regression
+    // that stage found, met again here for free.
+    const std::string dir = std::string(SOL_GAME_TEST_SCRATCH_DIR) + "/fleet-shape";
+    SOL_REQUIRE(sol::platform::createDirectories(dir.c_str()));
+    const std::string path = dir + "/shape.sav";
+    SOL_REQUIRE(w.saveTo(path.c_str(), "Shape"));
+
+    Fixture reloaded;
+    SOL_REQUIRE(reloaded.world().loadFrom(path.c_str()));
+    SOL_REQUIRE(reloaded.world().captains().size() == 2);
+    SOL_CHECK(reloaded.world().fleetFormation(0) == game::FleetFormation::Screen);
+    SOL_CHECK(reloaded.world().fleetFormation(1) == game::FleetFormation::Screen);
+    std::printf("  the shape round-trips: %s\n",
+                game::fleetFormationName(reloaded.world().fleetFormation(1)));
+}
+
+// ⚑⚑⚑ EVERY PILOT STATE THE ENGINE CAN PRODUCE HAS ITS OWN WORD, AND THE DEFECT
+// THIS GUARDS IS THE ONE STAGE D FOUND: three separate tables of state names,
+// each indexed modulo its own length, so a seventh state came back wearing the
+// FIRST one's name. The third of those three is what Lua's `pilot_think`
+// branches on - a guard in `Formation` arriving as "idle" makes the shipped
+// script pick it a new patrol leg twice a second, forever, with nothing
+// anywhere saying so. ⚑ `pilotRoleName`'s own drift guard is the model: read
+// the vocabulary out of the engine rather than listing it here.
+SOL_TEST(every_pilot_state_has_its_own_word_and_the_script_knows_the_ones_it_uses)
+{
+    const game::PilotState states[] = {game::PilotState::Idle,
+                                       game::PilotState::Patrol,
+                                       game::PilotState::Attack,
+                                       game::PilotState::Flee,
+                                       game::PilotState::Travel,
+                                       game::PilotState::Inspect,
+                                       game::PilotState::Formation};
+    std::vector<std::string> words;
+    for (const game::PilotState state : states) {
+        const std::string word = game::pilotStateName(state);
+        SOL_CHECK(!word.empty());
+        SOL_CHECK(std::find(words.begin(), words.end(), word) == words.end());
+        words.push_back(word);
+    }
+    std::printf("  %zu states, %zu distinct words\n", std::size(states), words.size());
+
+    // ⚑⚑ AND EVERY WORD THE SHIPPED SCRIPT COMPARES AGAINST IS ONE THE ENGINE
+    // CAN ACTUALLY HAND IT. The other direction of the same drift, and the
+    // cheaper half to get wrong: a branch on a state that no longer exists is
+    // dead code that reads as a rule.
+    std::vector<std::uint8_t> bytes;
+    SOL_REQUIRE(sol::platform::readFileBytes(SOL_DEF_DATA_DIR "/scripts/init.lua", bytes));
+    const std::string script(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+    for (const char* used : {"attack", "flee", "idle"}) {
+        const std::string needle = std::string("\"") + used + "\"";
+        std::printf("  the script tests for %s: %s\n",
+                    needle.c_str(),
+                    script.find(needle) == std::string::npos ? "MISSING" : "yes");
+        SOL_CHECK(script.find(needle) != std::string::npos);
+        SOL_CHECK(std::find(words.begin(), words.end(), std::string(used)) != words.end());
+    }
+}
+
+// ⚑⚑⚑ THE CREW TAB OFFERS THE SHAPE AND SAYS WHAT IT BUYS, and the note is the
+// control's only readout: a button labelled "Shape" beside the words "wide
+// screen" would leave a player cycling it to find out what changed. So each
+// shape names its own distance and what that distance costs.
+SOL_TEST(the_crew_tab_offers_the_shape_and_says_what_each_one_buys)
+{
+    Fixture fixture;
+    const Dock dock = fixture.findDock(screenBit(StationScreen::Crew));
+    SOL_REQUIRE(dock.system != kNone);
+    SOL_REQUIRE(fixture.walkIn(dock));
+    SpaceWorld& w = fixture.world();
+
+    SOL_REQUIRE(w.hireCaptain(0));
+    SOL_REQUIRE(w.hireCaptain(0));
+    SOL_REQUIRE(w.setCaptainCommander(1, 0));
+
+    std::deque<std::string> text;
+    sol::ui::StationPanel panel;
+    std::vector<sol::ui::MountRow> mounts;
+    std::vector<sol::ui::OutfitRow> components;
+    std::vector<sol::ui::OutfitRow> blackMarket;
+    std::vector<sol::ui::OutfitRow> blackMarketShips;
+    std::vector<sol::ui::OutfitRow> weapons;
+    std::vector<sol::ui::OutfitRow> crewCatalog;
+    std::vector<sol::ui::OutfitRow> crewAboard;
+    std::vector<sol::ui::OutfitRow> ships;
+    std::vector<sol::ui::FleetRow> fleetShips;
+    std::vector<sol::ui::CaptainRow> captainRows;
+    std::vector<sol::ui::CaptainRow> captainHires;
+    std::vector<sol::ui::CaptainRow> haulRows;
+    std::vector<sol::ui::CaptainRow> fleetOptions;
+    std::vector<sol::ui::FactionRow> factions;
+    const auto fill = [&](std::size_t selected) {
+        panel.selectedCaptain = static_cast<int>(selected);
+        game::fillStationOutfitting(w,
+                                    fixture.defs,
+                                    text,
+                                    panel,
+                                    mounts,
+                                    components,
+                                    blackMarket,
+                                    blackMarketShips,
+                                    weapons,
+                                    crewCatalog,
+                                    crewAboard,
+                                    ships,
+                                    fleetShips,
+                                    captainRows,
+                                    captainHires,
+                                    haulRows,
+                                    fleetOptions,
+                                    factions);
+    };
+
+    // ⚑ THE ACTION IS A CYCLE AND THE SCREEN DOES NOT KNOW THE ORDER - the
+    // world does, from `FleetFormation`. So the tab is driven the way a player
+    // drives it, and every shape has to come round.
+    std::vector<std::string> seen;
+    for (std::size_t press = 0; press < std::size(kShapes); ++press) {
+        fill(0);
+        SOL_REQUIRE(panel.captainCanSetFormation);
+        const std::string note = panel.captainFormationNote;
+        std::printf("  press %zu: \"%s\"\n", press, note.c_str());
+        // ⚑⚑ THE NOTE NAMES THE SHAPE THE WORLD IS HOLDING, which is what keeps
+        // the readout from being a second opinion - the failure this file has
+        // hit repeatedly is a screen re-deriving a rule the world owns.
+        SOL_CHECK(note.find(game::fleetFormationName(w.fleetFormation(0))) != std::string::npos);
+        SOL_CHECK(std::find(seen.begin(), seen.end(), note) == seen.end());
+        // ⚑⚑⚑ THE CELL, AS THE ONE THING A TEST CAN HOLD ABOUT IT. Six labels
+        // have run out of a cell in this arc and the instrument for every one
+        // was a screenshot. This row reserves ONE button rather than two, so its
+        // detail cell is the wider of the two shapes this tab draws - but 67
+        // glyphs is the budget the two-button rows were measured at, and staying
+        // inside it is what keeps the row safe if a second button is ever put
+        // beside "Shape".
+        SOL_CHECK(note.size() <= 67u);
+        seen.push_back(note);
+        panel.action = {.kind = sol::ui::StationAction::Kind::CycleFleetFormation, .index = 0};
+        int selected = 0;
+        game::executeStationAction(w, panel.action, selected);
+    }
+    // Back where it started: three presses, three notes, and the fourth is the
+    // first again.
+    fill(0);
+    SOL_CHECK(std::string(panel.captainFormationNote) == seen.front());
+
+    // And a subordinate is told whose fleet it is rather than handed a dead
+    // button - the third verb on this tab to send them to the same door.
+    fill(1);
+    std::printf("  subordinate: \"%s\"\n", panel.captainFormationNote);
+    SOL_CHECK(!panel.captainCanSetFormation);
+    SOL_CHECK(std::string(panel.captainFormationNote).find(w.captains()[0].name) != std::string::npos);
+}

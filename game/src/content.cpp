@@ -2066,6 +2066,45 @@ std::string fleetPlan(GameContent& content, double captain)
     return lines;
 }
 
+// ⚑⚑⚑ THE SHAPE, SET AND READ THROUGH ONE BINDING (Phase 40 stage D).
+// `sol.fleet_formation(n, 'screen')` sets it; **`sol.fleet_formation(n, '')`
+// reads it** - the cheap probe and the verb are the same call, which is
+// `sol.fleet_plan`'s bargain one stage on: the thing worth asking first is what
+// would happen, and a second function to ask it is a second thing to keep in
+// step.
+//
+// ⚑⚑ BOTH ARGUMENTS ARE REQUIRED, AND THE FIRST DRAFT OF THIS COMMENT SAID
+// OTHERWISE. It described the read as `sol.fleet_formation(n)` with the name
+// left off; the VM binds an exact arity and answers a short call with
+// *"expected 2 argument(s), got 1"*, so the form this file documented could
+// never be typed. Found by a drive on the first line of the session that used
+// it - which is the same lesson as the option-you-offer rule: a signature in a
+// comment is a claim about the code, and the console is where it is checked.
+std::string fleetFormation(GameContent& content, double captain, const char* shape)
+{
+    if (captain < 1.0) {
+        return "no such captain";
+    }
+    const auto index = static_cast<std::size_t>(captain) - 1;
+    const std::vector<game::Captain>& roster = content.world().captains();
+    if (index >= roster.size()) {
+        return "no such captain";
+    }
+    if (shape == nullptr || shape[0] == '\0') {
+        return roster[index].name + "'s fleet holds the " +
+               game::fleetFormationName(content.world().fleetFormation(index));
+    }
+    game::FleetFormation formation = game::FleetFormation::Close;
+    if (!game::fleetFormationFromName(shape, formation)) {
+        return "no such shape: try close, screen or high";
+    }
+    std::string reason;
+    if (!content.world().setFleetFormation(index, formation, &reason)) {
+        return "cannot: " + reason;
+    }
+    return roster[index].name + "'s fleet will hold the " + game::fleetFormationName(formation);
+}
+
 // ⚑⚑⚑⚑ THE STAGE C RULING, ASKABLE FROM TWO SYSTEMS AWAY (Phase 40 stage C).
 // The exit is "the fight actually happens, with the die roll provably not also
 // running", and neither half can be seen from the cockpit: the loss rate is a
@@ -2117,13 +2156,27 @@ std::string listCaptainShips(GameContent& content)
     for (const game::CaptainPuppetInfo& body : bodies) {
         std::snprintf(buffer,
                       sizeof(buffer),
-                      "\n%s: %s at %.0f km, %.0f m/s%s",
+                      "\n%s: %s at %.0f km, %.0f m/s, %s%s",
                       body.name.c_str(),
                       body.ship.c_str(),
                       body.distance / 1000.0,
                       body.speed,
+                      body.state,
                       body.paced ? " (on the record's schedule)" : "");
         lines += buffer;
+        // The shape, when this hull is flying one (stage D). On its own line
+        // rather than folded into the one above because it is the only fact
+        // about a captain's body that names a SECOND body, and a pair of
+        // positions is what this stage's exit is a claim about.
+        if (body.formation[0] != '\0') {
+            std::snprintf(buffer,
+                          sizeof(buffer),
+                          "\n   holding the %s, %.0f m off %s",
+                          body.formation,
+                          body.formationRange,
+                          body.formationAnchor.c_str());
+            lines += buffer;
+        }
     }
     return lines;
 }
@@ -4729,6 +4782,7 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&orderFleet>("sol", "order_fleet", this);
     m_vm.registerFunction<&standFleetDown>("sol", "stand_fleet_down", this);
     m_vm.registerFunction<&fleetPlan>("sol", "fleet_plan", this);
+    m_vm.registerFunction<&fleetFormation>("sol", "fleet_formation", this);
     m_vm.registerFunction<&heldSystems>("sol", "held_systems", this);
     m_vm.registerFunction<&listCaptainShips>("sol", "captain_ships", this);
     m_vm.registerFunction<&insuranceQuote>("sol", "insurance_quote", this);
