@@ -23,6 +23,7 @@
 #include "station_ui.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <deque>
@@ -30,6 +31,7 @@
 #include <vector>
 
 #include <sol/assets/data_defs.hpp>
+#include <sol/core/profiler.hpp>
 #include <sol/platform/file_io.hpp>
 #include <sol/test/test.hpp>
 
@@ -4512,4 +4514,427 @@ SOL_TEST(the_crew_tab_offers_the_shape_and_says_what_each_one_buys)
     std::printf("  subordinate: \"%s\"\n", panel.captainFormationNote);
     SOL_CHECK(!panel.captainCanSetFormation);
     SOL_CHECK(std::string(panel.captainFormationNote).find(w.captains()[0].name) != std::string::npos);
+}
+
+// --- The instrument and the cap (Phase 40 stage E) ----------------------------
+
+namespace {
+
+// Docks with a crew hall, in galaxy order, up to `wanted` of them.
+//
+// ⚑⚑⚑ A HALL SEATS EXACTLY THREE AND HIRING EMPTIES IT FOR EVER, which is why
+// this helper has to exist and is also half of what stage E found.
+// `captainCandidates` draws `kCaptainsPerHall` = 3 from a seed folded out of
+// the system and the station, and skips anybody already in `m_captains` - so a
+// hall the player has hired three people out of offers nobody, permanently. A
+// fleet of more than three is a fleet assembled across more than one crew hall,
+// and that is a fact about the shipped galaxy rather than a constant this stage
+// gets to pick.
+[[nodiscard]] std::vector<Dock> crewHalls(Fixture& fixture, std::size_t wanted)
+{
+    std::vector<Dock> out;
+    const SpaceWorld& w = fixture.world();
+    const std::uint32_t crew = screenBit(StationScreen::Crew);
+    for (std::uint32_t s = 0; s < w.galaxy().systems.size() && out.size() < wanted; ++s) {
+        for (std::uint32_t t = 0; t < w.galaxy().systems[s].stations.size() && out.size() < wanted; ++t) {
+            if ((w.stationScreens(s, t) & crew) == crew) {
+                out.push_back({s, t});
+            }
+        }
+    }
+    return out;
+}
+
+// A fleet of `size` standing on `dock`, `beams` of them carrying a mining beam
+// and the rest their guns, all under the captain at roster index 0. Returns the
+// number of crew halls it took.
+//
+// ⚑⚑ THE PEOPLE ARE HIRED BEFORE THE HULLS ARE BOUGHT, and that ordering is
+// the whole trick. `assignCaptain` refuses a ship stored anywhere but the dock
+// you are standing on, and so does `fleetWorkPlan` - but a captain with no hull
+// is a record, and records travel with the player. So the walk is: empty every
+// hall you need, come back, and buy the fleet in one place.
+//
+// ⚑ The beams go to the LAST captains, so the guard ranking is drawn from the
+// front of the roster and a tie resolves somewhere a test can name.
+[[nodiscard]] std::size_t
+buildFleetOfSize(Fixture& fixture, const Dock& dock, std::size_t size, std::size_t beams)
+{
+    SpaceWorld& w = fixture.world();
+    w.addCredits(10'000'000.0);
+    std::size_t halls = 0;
+    const std::size_t needed = (size + SpaceWorld::kCaptainsPerHall - 1) / SpaceWorld::kCaptainsPerHall;
+    for (const Dock& hall : crewHalls(fixture, needed)) {
+        if (w.captains().size() >= size) {
+            break;
+        }
+        if (!fixture.walkIn(hall)) {
+            return 0;
+        }
+        ++halls;
+        while (w.captains().size() < size && w.hireCaptain(0)) {
+        }
+    }
+    if (w.captains().size() != size || !fixture.walkIn(dock)) {
+        return 0;
+    }
+    for (std::size_t i = 0; i < size; ++i) {
+        const bool wantsBeam = i + beams >= size;
+        const std::size_t bought = wantsBeam ? buyAndArmAMiner(fixture) : buyAndArmAFighter(fixture);
+        if (bought == 0 || !w.assignCaptain(i, bought)) {
+            return 0;
+        }
+    }
+    for (std::size_t i = 1; i < size; ++i) {
+        if (!w.setCaptainCommander(i, 0)) {
+            return 0;
+        }
+    }
+    return halls;
+}
+
+// The Crew tab's fleet note for `commander`, which is fifteen out-parameters of
+// boilerplate everywhere else in this file and one line here.
+[[nodiscard]] std::string fleetNoteFor(Fixture& fixture, std::size_t commander)
+{
+    std::deque<std::string> text;
+    sol::ui::StationPanel panel;
+    std::vector<sol::ui::MountRow> mounts;
+    std::vector<sol::ui::OutfitRow> components;
+    std::vector<sol::ui::OutfitRow> blackMarket;
+    std::vector<sol::ui::OutfitRow> blackMarketShips;
+    std::vector<sol::ui::OutfitRow> weapons;
+    std::vector<sol::ui::OutfitRow> crewCatalog;
+    std::vector<sol::ui::OutfitRow> crewAboard;
+    std::vector<sol::ui::OutfitRow> ships;
+    std::vector<sol::ui::FleetRow> fleetShips;
+    std::vector<sol::ui::CaptainRow> captainRows;
+    std::vector<sol::ui::CaptainRow> captainHires;
+    std::vector<sol::ui::CaptainRow> haulRows;
+    std::vector<sol::ui::CaptainRow> fleetOptions;
+    std::vector<sol::ui::FactionRow> factions;
+    panel.selectedCaptain = static_cast<int>(commander);
+    game::fillStationOutfitting(fixture.world(),
+                                fixture.defs,
+                                text,
+                                panel,
+                                mounts,
+                                components,
+                                blackMarket,
+                                blackMarketShips,
+                                weapons,
+                                crewCatalog,
+                                crewAboard,
+                                ships,
+                                fleetShips,
+                                captainRows,
+                                captainHires,
+                                haulRows,
+                                fleetOptions,
+                                factions);
+    return panel.captainFleetNote;
+}
+
+// What one frame of the whole world cost, and what it was asked to chew.
+//
+// ⚑ THE COUNTERS ARE FRAME TOTALS RATHER THAN ONE BUBBLE'S, because that is how
+// the zone is entered: `tickSystem` runs per bubble and `addCounter`
+// accumulates within a frame. It is the honest number anyway - the 16.7 ms
+// budget belongs to the frame, not to a system.
+struct FrameCost
+{
+    double milliseconds = 0.0;
+    std::uint64_t collisionBodies = 0;
+    std::uint64_t collisionPairs = 0;
+};
+
+// The profiler is off by default and nothing but `main.cpp` ever opens a frame
+// on it, so the test does what the game does - which is also the only way the
+// counters are published at all.
+[[nodiscard]] FrameCost timeFrames(SpaceWorld& w, int frames)
+{
+    sol::core::Profiler& profiler = sol::core::frameProfiler();
+    profiler.reset();
+    profiler.setEnabled(true);
+    const auto start = std::chrono::steady_clock::now();
+    for (int i = 0; i < frames; ++i) {
+        profiler.beginFrame();
+        w.tick(1.0 / 60.0);
+    }
+    const auto end = std::chrono::steady_clock::now();
+    profiler.beginFrame(); // publishes the frame just run, which is what is read
+    FrameCost cost;
+    cost.milliseconds =
+        std::chrono::duration<double, std::milli>(end - start).count() / static_cast<double>(frames);
+    if (const std::uint32_t zone = profiler.findZone("sim.collision.build");
+        zone != sol::core::kInvalidZone) {
+        cost.collisionBodies = profiler.report(zone).counter;
+    }
+    if (const std::uint32_t zone = profiler.findZone("sim.collision.resolve");
+        zone != sol::core::kInvalidZone) {
+        cost.collisionPairs = profiler.report(zone).counter;
+    }
+    profiler.setEnabled(false);
+    profiler.reset();
+    return cost;
+}
+
+} // namespace
+
+// ⚑⚑⚑⚑ THE OTHER AXIS, AND THE ONE NOTHING IN THIS TREE HAD EVER MEASURED
+// (Phase 40 stage E, on the user's ruling 20 one phase back: a curve the design
+// leans on ships as an instrument with assertions, not as a session's notes).
+// Phase 39 measured what a held SYSTEM costs - ~0.12 ms each, linear - on the
+// argument that `sim::resolveCollisions` is O(n^2) INSIDE a bubble while
+// bubbles cannot see each other. A fleet is the other half of that sentence:
+// one bubble, which is the cheap direction, and N more hulls in the one sky,
+// which is the quadratic one. If the fear is real it is real here.
+//
+// ⚑⚑ IT MEASURES THE WORST CASE ON PURPOSE, WHICH IS A FLEET OF NOTHING BUT
+// MINERS. `fleetWorkPlan` sends every member past the miners and the guards
+// away as HAULERS, and a hauler LEAVES the system - so an ordinary three-role
+// fleet puts a handful of hulls in the sky whatever its size, and a curve drawn
+// on one would be measuring the composition rather than the cost. Every member
+// carrying a beam is the arrangement that actually puts N of the player's hulls
+// in one bubble at once.
+//
+// ⚑⚑⚑⚑ WHAT IT MEASURED, debug, 400 frames, all-miner fleets posted in Lyrth
+// and watched from two systems away:
+//
+//     fleet | halls | hulls | entities | bodies |  pairs | ms/frame
+//         1 |     1 |    11 |       80 |     86 |   2590 |    0.300
+//         2 |     1 |    12 |       81 |     87 |   2661 |    0.332
+//         3 |     1 |    13 |       82 |     88 |   2733 |    0.355
+//         6 |     2 |    16 |       85 |     91 |   2955 |    0.441
+//         9 |     3 |    19 |       88 |     94 |   3186 |    0.523
+//        12 |     4 |    22 |       91 |     97 |   3426 |    0.608
+//
+// ⚑⚑⚑ DEAD LINEAR AT 0.028 ms A HULL, WITH NO BEND ANYWHERE - and the phase
+// spec's own estimate for this was 0.00199 ms, so a CAPTAIN's hull is fourteen
+// times what that regression priced an entity at. The spec measured cost per
+// bubble against whatever the shipped galaxy happened to hold, where a hull is
+// one entity much as a rock is; a captain's hull is also a stationary-captain
+// tick, a mining arm, a formation slot and a puppet reconcile. The correction
+// changes nothing about the conclusion - 590 hulls in one sky to spend a
+// 16.7 ms frame - which is the point: THE FRAME BUDGET IMPOSES NO CAP, and it
+// is now measured here rather than argued in a roadmap.
+//
+// ⚑ IT PRINTS TIMES AND ASSERTS RATIOS AND SIZES, on `what_a_bubble_costs_per_
+// frame_past_the_cap`'s precedent: an absolute wall clock asserted on three
+// platforms and in two configurations is a flake generator. A RATIO of two
+// times taken on the same machine in the same run is not - a slow machine
+// scales both - so the finding itself can be held, which is what ruling 20
+// asks for and what the system instrument could not do.
+SOL_TEST(what_a_fleet_of_n_costs_per_frame_in_one_sky)
+{
+    // 3 is one hall; 6, 9 and 12 are two, three and four of them. The steps are
+    // chosen so the seat count shows up in the setup rather than being argued
+    // about in a comment.
+    constexpr std::size_t kSizes[] = {1, 2, 3, 6, 9, 12};
+    constexpr int kFrames = 400;
+
+    std::printf("  fleet | halls | posted | hulls | entities | bodies |    pairs | ms/frame\n");
+    double baseline = 0.0;
+    double largestCost = 0.0;
+    std::uint64_t firstBodies = 0;
+    std::uint64_t lastBodies = 0;
+    std::uint64_t firstPairs = 0;
+    std::uint64_t lastPairs = 0;
+    for (const std::size_t size : kSizes) {
+        Fixture fixture;
+        const Dock dock = findMiningDock(fixture);
+        SOL_REQUIRE(dock.system != kNone);
+        SpaceWorld& w = fixture.world();
+        const std::size_t halls = buildFleetOfSize(fixture, dock, size, /*beams=*/size);
+        SOL_REQUIRE(halls > 0);
+
+        // One order. A fleet of one has nobody to command, so that sample is a
+        // single posted captain - the honest thing for the rest to be measured
+        // against, because it is what a player had before Phase 40.
+        if (size > 1) {
+            SOL_REQUIRE(w.orderFleetWork(0));
+        } else {
+            SOL_REQUIRE(w.orderMine(0));
+        }
+
+        // Two systems away, which is the case that matters: the order holds the
+        // bubble open and the sky being paid for is one nobody is looking at.
+        const Dock elsewhere = fixture.findDock(screenBit(StationScreen::Trade), 0, dock);
+        SOL_REQUIRE(elsewhere.system != kNone && elsewhere.system != dock.system);
+        SOL_REQUIRE(fixture.walkIn(elsewhere));
+        SOL_REQUIRE(w.systemIsInstantiated(dock.system));
+
+        std::vector<SpaceWorld::HeldSystemReport> rows;
+        const auto posted = [&]() -> std::uint32_t {
+            w.heldSystemReport(rows);
+            for (const SpaceWorld::HeldSystemReport& row : rows) {
+                if (row.system == dock.system) {
+                    return row.posted;
+                }
+            }
+            return 0;
+        };
+        const auto sky = [&]() -> SpaceWorld::BubbleReport {
+            SpaceWorld::BubbleReport out;
+            for (std::size_t s = 0; s < w.instantiatedSystemCount(); ++s) {
+                if (w.instantiatedSystemAt(s) == dock.system && w.bubbleReportAt(s, out)) {
+                    return out;
+                }
+            }
+            return {};
+        };
+        // Everybody in the sky before the clock starts, so the count being
+        // timed is the count being printed.
+        SOL_REQUIRE(runUntil(w, [&] { return posted() == size; }, 2000));
+        const SpaceWorld::BubbleReport bubble = sky();
+
+        const FrameCost cost = timeFrames(w, kFrames);
+        std::printf("  %5zu | %5zu | %6u | %5zu | %8zu | %6llu | %8llu | %8.3f\n",
+                    size,
+                    halls,
+                    posted(),
+                    bubble.ships,
+                    bubble.entities,
+                    static_cast<unsigned long long>(cost.collisionBodies),
+                    static_cast<unsigned long long>(cost.collisionPairs),
+                    cost.milliseconds);
+
+        // ⚑ THE ANTI-VACUITY, AND IT IS WHAT MAKES THE TIMES MEAN ANYTHING AT
+        // ALL. A run that quietly lost its hulls would print a flat line and
+        // read as excellent news, which is the same rule the system instrument
+        // states about its own bubbles.
+        SOL_CHECK(w.captains().size() == size);
+        SOL_CHECK(posted() == size);
+        SOL_CHECK(bubble.ships >= size);
+        SOL_CHECK(cost.collisionPairs > 0);
+        if (size == kSizes[0]) {
+            baseline = cost.milliseconds;
+            firstBodies = cost.collisionBodies;
+            firstPairs = cost.collisionPairs;
+        }
+        largestCost = cost.milliseconds;
+        lastBodies = cost.collisionBodies;
+        lastPairs = cost.collisionPairs;
+    }
+
+    constexpr std::size_t kLargest = kSizes[std::size(kSizes) - 1];
+    constexpr std::size_t kAdded = kLargest - kSizes[0];
+    std::printf("  %zu more hulls: %.3f -> %.3f ms/frame (%.4f each), bodies +%llu, pairs +%llu\n",
+                kAdded,
+                baseline,
+                largestCost,
+                (largestCost - baseline) / static_cast<double>(kAdded),
+                static_cast<unsigned long long>(lastBodies - firstBodies),
+                static_cast<unsigned long long>(lastPairs - firstPairs));
+
+    // ⚑⚑ EVERY MEMBER IS ONE MORE COLLISION BODY, WHICH IS WHY THE CURVE IS
+    // STRAIGHT. The quadratic pass is quadratic in the BODY count, so a linear
+    // input is the whole explanation for a linear cost - and this is the half
+    // of the finding that is arithmetic rather than a clock, so it is asserted
+    // exactly rather than approximately.
+    SOL_CHECK(lastBodies >= firstBodies + kAdded);
+    SOL_CHECK(lastPairs > firstPairs);
+
+    // ⚑⚑⚑⚑ AND THE FINDING ITSELF, AS A RATIO SO IT SURVIVES A SLOW MACHINE.
+    // Eleven more hulls took the frame from 0.300 ms to 0.608 - it did not
+    // double twice, which a quadratic in hulls would have done many times over
+    // (the body count rose 13% and its pair count 34%, against a fleet that
+    // grew twelvefold). Four is generous against a measured 2.03 and still
+    // nowhere near what a bend would produce.
+    SOL_CHECK(largestCost < baseline * 4.0);
+}
+
+// ⚑⚑⚑⚑ THE COUNT OF GUARDS SCALES NOW, AND THE TEST EXISTS BECAUSE STAGE C
+// DELETED STAGE B's REASON FOR IT WITHOUT EITHER STAGE NOTICING (Phase 40 stage
+// E, the user's ruling 4). Stage B posted exactly one guard and said why in the
+// file: `heldBubbleRiskPerSecond` halves the loss rate once per patrol, so the
+// second buys half of an already-halved number. Stage C then made that function
+// return 0.0f for precisely the systems a fleet holds - the die roll stands
+// down where the fine layer reopens - so the justification had been reduced to
+// half of nothing while the code it justified stayed put. Cover in a fleet's
+// own system is a hull in a real fight now, and it is worth a whole gun.
+//
+// ⚑⚑⚑ THE CEILING IS `rollHeldFleetRaid`'s OWN THREE, borrowed rather than
+// invented: that function sends nobody once three of the aggressor's hulls are
+// present, so a fourth guard is a hull with nothing to shoot at in the worst
+// case the game can produce. ⚑ And one per three leaves stage B's flown
+// three-role fleet EXACTLY as it was, which is the property this test pins
+// first - a rule that scales by re-deciding the case that has already been
+// played is a rule that broke something to fix nothing.
+SOL_TEST(a_fleets_guard_count_scales_with_it_and_stops_at_the_raids_own_ceiling)
+{
+    struct Case
+    {
+        std::size_t size;
+        std::size_t guards; // one per three members, never more than three
+    };
+
+    constexpr Case kCases[] = {{2, 1}, {3, 1}, {6, 2}, {9, 3}, {12, 3}};
+
+    for (const Case& expected : kCases) {
+        Fixture fixture;
+        const Dock dock = findMiningDock(fixture);
+        SOL_REQUIRE(dock.system != kNone);
+        SpaceWorld& w = fixture.world();
+        // One beam, so every other member is a candidate for the beat and the
+        // count that comes back is the RULE's answer rather than the fits'.
+        SOL_REQUIRE(buildFleetOfSize(fixture, dock, expected.size, /*beams=*/1) > 0);
+        SOL_REQUIRE(w.buyMarketIntel());
+
+        std::vector<SpaceWorld::FleetAssignment> plan;
+        std::string why;
+        SOL_REQUIRE(w.fleetWorkPlan(0, plan, &why));
+        std::size_t mining = 0;
+        std::size_t guarding = 0;
+        std::size_t hauling = 0;
+        for (const SpaceWorld::FleetAssignment& job : plan) {
+            mining += job.kind == game::OrderKind::Mine ? 1u : 0u;
+            guarding += job.kind == game::OrderKind::Patrol ? 1u : 0u;
+            hauling += job.kind == game::OrderKind::Haul ? 1u : 0u;
+        }
+        std::printf("  fleet of %2zu: mining %zu, guarding %zu, hauling %zu\n",
+                    expected.size,
+                    mining,
+                    guarding,
+                    hauling);
+        SOL_CHECK(guarding == expected.guards);
+        SOL_CHECK(mining == 1);
+        // ⚑ NOBODY IS LEFT OUT, which is the property that makes the count above
+        // a CHOICE rather than an accident of who had a hull: every member of
+        // the fleet is given exactly one job.
+        SOL_CHECK(plan.size() == expected.size);
+        SOL_CHECK(mining + guarding + hauling == expected.size);
+
+        // ⚑⚑ THE ANTI-VACUITY FOR THE CEILING, AND WITHOUT IT THE LAST TWO ROWS
+        // PROVE NOTHING. "Three guards" is only a ceiling if there were more
+        // armed hulls available to post - otherwise the rule and a shortage of
+        // gunships give the same answer, and a broken rule would read as a pass.
+        if (expected.guards == 3) {
+            SOL_CHECK(hauling > 0);
+        }
+        // And the tie goes to the earlier row: every hull here is the same def
+        // with the same guns, so the beat falls to the lowest roster indices
+        // that are not carrying a beam - which is `stable_sort`'s promise, and
+        // was `>` and not `>=` when there was one winner to pick.
+        for (const SpaceWorld::FleetAssignment& job : plan) {
+            if (job.kind == game::OrderKind::Patrol) {
+                SOL_CHECK(job.captain < expected.guards);
+            }
+        }
+
+        // ⚑⚑⚑⚑ AND THE SCREEN SAYS THE PART THE TALLY HIDES (the user's ruling
+        // 3: no hard cap, report instead). Nothing refuses a fleet for being
+        // large - the instrument above is why - so the only protection the
+        // player has is being told what a large one actually does, which is
+        // stack haulers on ONE lane to ONE counter. "hauling 8" reads like
+        // eight times the income; it is eight ships eroding one spread.
+        const std::string note = fleetNoteFor(fixture, 0);
+        std::printf("  note: \"%s\" (%zu glyph(s))\n", note.c_str(), note.size());
+        SOL_CHECK(note.find("guarding " + std::to_string(expected.guards)) != std::string::npos);
+        SOL_CHECK((note.find("all to one market") != std::string::npos) == (hauling > 1));
+        // The cell is 590 px, about 67 glyphs, and this note carries no captain
+        // name - so unlike the refusals on this tab its worst case is its
+        // longest number rather than its longest person.
+        SOL_CHECK(note.size() <= 67u);
+    }
 }

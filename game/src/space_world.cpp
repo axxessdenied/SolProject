@@ -11134,40 +11134,56 @@ bool SpaceWorld::fleetWorkPlan(std::size_t commanderIndex,
         return no("nobody in this fleet carries a mining beam");
     }
 
-    // ⚑⚑⚑⚑ TWO: ONE GUARD, AND THE REASON IS A NUMBER THIS FILE ALREADY HOLDS.
-    // `heldBubbleRiskPerSecond` halves the loss rate once PER GUARD posted in
-    // the system - geometric - so the second patrol buys half of an already
-    // halved number while a second hold buys a whole extra load moved. The
-    // fleet occupies one system and a guard covers all of it, which is what
-    // makes cover a shared good and cargo a per-hull one. So the best gun among
-    // whoever is not cutting rock takes the beat and everybody after that
-    // hauls.
+    // ⚑⚑⚑⚑ TWO: THE GUARD SCALES NOW, ONE PER THREE MEMBERS AND NEVER MORE
+    // THAN THREE (Phase 40 stage E) - AND BOTH HALVES REPLACE A REASON STAGE C
+    // DELETED WITHOUT NOTICING. Stage B posted exactly one, on the argument
+    // that `heldBubbleRiskPerSecond` halves the loss rate once PER GUARD, so
+    // the second patrol buys half of an already-halved number. **That number is
+    // now zero for exactly the systems this order is given about**: stage C's
+    // ruling 1 stands the die roll down wherever a fleet is posted, and the
+    // function returns 0.0f on its second line. Cover in a fleet's own system
+    // stopped being geometric the moment it stopped being a die roll at all -
+    // it is a hull in a real fight, and a second one is worth a whole second
+    // gun rather than half of nothing.
     //
-    // ⚑⚑ AND IT IS THE BEST GUN RATHER THAN "A HULL WITH GUNS", because stage
+    // ⚑⚑⚑ AND THE CEILING IS NOT INVENTED EITHER - IT IS `rollHeldFleetRaid`'s
+    // OWN. That function counts the aggressor's hulls already in the sky and
+    // sends nobody once three are present, which is the ambient spawn's ceiling
+    // borrowed deliberately. So the fourth guard is a hull with nothing to
+    // shoot at, in the worst case the game can produce, and the third is the
+    // last one that can be outnumbered. ⚑ One per three keeps stage B's flown
+    // three-role fleet EXACTLY as it was - a fleet of three still posts one -
+    // so the rule scales without re-deciding the case that has been played.
+    //
+    // ⚑⚑ AND IT IS THE BEST GUNS RATHER THAN "HULLS WITH GUNS", because stage
     // D established that the boolean cannot discriminate: `sol.mining_laser`
     // has `damage = 3.0`, and *"every weapon this game ships can hurt
     // something"*. A number can rank; a predicate every hull satisfies cannot.
-    std::size_t guard = m_captains.size();
-    float bestGuns = 0.0f;
-    for (const std::size_t i : crew) {
-        if (shipMiningPower(m_fleet[m_captains[i].ship]) > 0.0f) {
-            continue;
-        }
-        const float guns = shipGunPower(m_fleet[m_captains[i].ship]);
-        // `>` and not `>=`, so a tie goes to the earlier row - the roster's own
-        // order, which is the order the player hired them in.
-        if (guns > bestGuns) {
-            bestGuns = guns;
-            guard = i;
-        }
-    }
-    // Zero is reachable only through an empty weapon mount, and it is exactly
+    // ⚑ Zero is reachable only through an empty weapon mount, and it is exactly
     // what `orderPatrol` refuses - so a fleet of unarmed hulls posts no guard
     // rather than posting one that would be shot down without returning fire.
-    if (guard < m_captains.size() && bestGuns > 0.0f) {
-        out.push_back({.captain = guard, .kind = OrderKind::Patrol, .market = kNoIndex});
-    } else {
-        guard = m_captains.size();
+    constexpr std::size_t kMembersPerGuard = 3;
+    constexpr std::size_t kMostGuards = 3;
+    const std::size_t wantedGuards = std::clamp(crew.size() / kMembersPerGuard, std::size_t{1}, kMostGuards);
+    std::vector<std::size_t> ranked;
+    for (const std::size_t i : crew) {
+        if (shipMiningPower(m_fleet[m_captains[i].ship]) <= 0.0f &&
+            shipGunPower(m_fleet[m_captains[i].ship]) > 0.0f) {
+            ranked.push_back(i);
+        }
+    }
+    // `stable_sort`, so a tie goes to the earlier row - the roster's own order,
+    // which is the order the player hired them in. That was `>` and not `>=`
+    // when there was one winner; it is the sort's stability now, and it is the
+    // same promise.
+    std::stable_sort(ranked.begin(), ranked.end(), [&](std::size_t a, std::size_t b) {
+        return shipGunPower(m_fleet[m_captains[a].ship]) > shipGunPower(m_fleet[m_captains[b].ship]);
+    });
+    if (ranked.size() > wantedGuards) {
+        ranked.resize(wantedGuards);
+    }
+    for (const std::size_t i : ranked) {
+        out.push_back({.captain = i, .kind = OrderKind::Patrol, .market = kNoIndex});
     }
 
     // ⚑⚑⚑ THREE: EVERYBODY ELSE MOVES THE ORE, AND PHASE 39's MEASUREMENT IS
@@ -11182,7 +11198,8 @@ bool SpaceWorld::fleetWorkPlan(std::size_t commanderIndex,
     // return on capital.
     std::vector<std::size_t> haulers;
     for (const std::size_t i : crew) {
-        if (i == guard || shipMiningPower(m_fleet[m_captains[i].ship]) > 0.0f) {
+        const bool posted = std::find(ranked.begin(), ranked.end(), i) != ranked.end();
+        if (posted || shipMiningPower(m_fleet[m_captains[i].ship]) > 0.0f) {
             continue;
         }
         haulers.push_back(i);

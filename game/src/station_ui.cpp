@@ -703,10 +703,25 @@ void fillStationOutfitting(const SpaceWorld& world,
                 guarding += job.kind == game::OrderKind::Patrol ? 1u : 0u;
                 hauling += job.kind == game::OrderKind::Haul ? 1u : 0u;
             }
-            panel.captainFleetNote =
-                store(text,
-                      "mining " + std::to_string(mining) + ", guarding " + std::to_string(guarding) +
-                          ", hauling " + std::to_string(hauling));
+            // ⚑⚑⚑⚑ AND THE ONE THING THE TALLY HIDES IS SAID OUT LOUD (Phase
+            // 40 stage E, the user's ruling 3: no hard cap, report instead).
+            // The instrument found the frame budget imposes no limit at all -
+            // 0.028 ms a hull, dead linear, ~590 hulls to a frame - so nothing
+            // refuses a fleet for being large. What actually falls off is the
+            // WORK: `fleetWorkPlan` sends every member past the miners and the
+            // guards to `haulDestinations()[0]`, so a big fleet is haulers
+            // stacked on ONE lane to ONE counter, each eroding the spread the
+            // one before it left. "hauling 8" reads like eight times the
+            // income and is not, and a player who cannot see that has been
+            // told a true number that means the wrong thing.
+            //
+            // ⚑ Only when there is more than one, because for a single hauler
+            // it is noise - and the cell is 590 px, about 67 glyphs, which
+            // this sentence at its longest spends 49 of.
+            panel.captainFleetNote = store(
+                text,
+                "mining " + std::to_string(mining) + ", guarding " + std::to_string(guarding) + ", hauling " +
+                    std::to_string(hauling) + (hauling > 1 ? ", all to one market" : ""));
         } else if (fleetWorking > 0) {
             // ⚑ THE ONE REFUSAL WORTH REPHRASING. The plan says "'Tarek'
             // already has orders", which is true and reads as a fault; a fleet
