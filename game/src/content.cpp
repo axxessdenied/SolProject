@@ -2066,6 +2066,41 @@ std::string fleetPlan(GameContent& content, double captain)
     return lines;
 }
 
+// ⚑⚑⚑⚑ THE STAGE C RULING, ASKABLE FROM TWO SYSTEMS AWAY (Phase 40 stage C).
+// The exit is "the fight actually happens, with the die roll provably not also
+// running", and neither half can be seen from the cockpit: the loss rate is a
+// number nothing draws, and the hulls doing the fighting are in a registry the
+// player's screens do not read. One line per system, and the pair to read is
+// `loss` against `raid` - a lone captain has a loss rate and no raid rate, a
+// fleet has the reverse, and never both.
+std::string heldSystems(GameContent& content)
+{
+    std::vector<game::SpaceWorld::HeldSystemReport> rows;
+    content.world().heldSystemReport(rows);
+    if (rows.empty()) {
+        return "no captain of yours is posted anywhere";
+    }
+    const auto& systems = content.world().galaxy().systems;
+    char buffer[224] = {};
+    std::string out = std::to_string(rows.size()) + " system(s) held by your people";
+    for (const game::SpaceWorld::HeldSystemReport& row : rows) {
+        std::snprintf(buffer,
+                      sizeof(buffer),
+                      "\n%s: %u posted%s | loss %.5f/s, raid %.5f/s | %u hostile hull(s), %u on your "
+                      "people, %u of yours fighting back",
+                      row.system < systems.size() ? systems[row.system].name.c_str() : "?",
+                      row.posted,
+                      row.fleet ? " (a fleet)" : "",
+                      static_cast<double>(row.lossPerSecond),
+                      static_cast<double>(row.raidPerSecond),
+                      row.hostiles,
+                      row.attacking,
+                      row.guarding);
+        out += buffer;
+    }
+    return out;
+}
+
 // THE PROMOTION, ASKED OF THE SKY RATHER THAN OF THE RECORD. The failure mode
 // of a two-representation seam is the two disagreeing, so this reports what is
 // DRAWN - and `paced` says which clock moved it, which is the one fact that
@@ -4694,6 +4729,7 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&orderFleet>("sol", "order_fleet", this);
     m_vm.registerFunction<&standFleetDown>("sol", "stand_fleet_down", this);
     m_vm.registerFunction<&fleetPlan>("sol", "fleet_plan", this);
+    m_vm.registerFunction<&heldSystems>("sol", "held_systems", this);
     m_vm.registerFunction<&listCaptainShips>("sol", "captain_ships", this);
     m_vm.registerFunction<&insuranceQuote>("sol", "insurance_quote", this);
     m_vm.registerFunction<&addCredits>("sol", "add_credits", this);

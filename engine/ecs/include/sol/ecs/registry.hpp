@@ -137,6 +137,23 @@ public:
         return *pool;
     }
 
+    // The same, for a caller that cannot promise the pool exists: null rather
+    // than an assert.
+    //
+    // A pool is created by the first `emplace`, so "no pool" and "no component
+    // of this type anywhere" are the same state - and for a rare component in
+    // a registry that is one of many, the second is the ordinary case rather
+    // than an error. A const reader looking across every open world for a
+    // component only a few of them ever hold has no way to promise anything,
+    // and the alternatives are both worse: dropping const so `storage<T>()`
+    // can CREATE the pool makes a read mutate, and asking `tryGet` per entity
+    // needs the entity list this would have provided.
+    template <typename T>
+    [[nodiscard]] const Pool<T>* tryStorage() const
+    {
+        return poolIfExists<T>();
+    }
+
 private:
     friend class Snapshot; // world save/load reads and restores entity slots
 

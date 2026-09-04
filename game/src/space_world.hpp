@@ -738,6 +738,25 @@ struct CaptainPuppetInfo
     return registry.tryGet<CaptainPuppet>(registry.entityFromIndex(entityIndex)) != nullptr;
 }
 
+// ⚑⚑⚑⚑ THE SAME QUESTION ASKED OF A *REMEMBERED* INDEX, AND THE DIFFERENCE IS
+// NOT DEFENSIVE PROGRAMMING (Phase 40 stage C). `playerOwnedHull` above builds
+// an `Entity` handle, and `Registry::entityFromIndex` ASSERTS `index <
+// m_generations.size()` - which is fine for an index walked out of a pool this
+// tick and is a live assert for `ShipPilot::targetIndex`, which is a number a
+// pilot wrote down some time ago. Every existing reader of that field goes
+// through `tryGet(index)` on a pool, which is bounds-checked by the sparse
+// set; stage C's first cut was the first code in the tree to turn one into a
+// handle, and it took the game down in a live drive.
+//
+// ⚑ So this is the CONVENTION written down rather than a new rule: a
+// remembered index may be dereferenced through a pool and never promoted to a
+// handle. `isPlayerEntity` has always done it this way, one line up.
+[[nodiscard]] inline bool playerOwnedHullAt(const sol::ecs::Registry& registry, std::uint32_t entityIndex)
+{
+    const sol::ecs::Pool<CaptainPuppet>* pool = registry.tryStorage<CaptainPuppet>();
+    return pool != nullptr && pool->tryGet(entityIndex) != nullptr;
+}
+
 // A body for an extractor station's ore draw (Phase 8x stage 6). The same
 // puppet relationship a trader has, against a different coarse actor: an
 // outpost marked produces_from = "field" pulls real rock out of MiningSim
@@ -1136,6 +1155,42 @@ enum class ResponseCause : std::uint32_t
         break;
     }
     return PilotRole::Patrol;
+}
+
+// How often a pilot decides anything, in seconds. ⚑ ONE NUMBER, TWO
+// DISPATCHES SINCE PHASE 40 STAGE C: `collectDuePilotThinks` hands the
+// player's bubble to Lua on this clock, and `retargetHeldBubble` makes the
+// same decision in C++ for a bubble a fleet is posted in. It was a local
+// constant in the first of those until the second existed, and two copies of a
+// cadence is how the system you left quietly starts running at a different
+// speed from the one you are in.
+inline constexpr float kThinkInterval = 0.5f; // 2 Hz strategy; steering runs at 60
+
+// The hull fraction at which each kind of pilot breaks off, which is
+// `pilot_think`'s own table read back into C++ (Phase 40 stage C).
+//
+// ⚑⚑⚑ IT IS A COPY AND SAYING SO IS BETTER THAN HIDING IT. The alternative was
+// to move the numbers into a def or a binding so Lua and this pass could share
+// one row, and that is a bigger change than this stage is: `init.lua` is
+// player-facing content and its thresholds are CHARACTER - Phase 37's covert
+// raider leaves with 70% of its hull still on, and that line is the whole
+// difference between it and a timid fighter. What must not happen is the two
+// drifting, so they are named together here and the test
+// `a_fight_nobody_watches_breaks_off_where_a_watched_one_does` is what holds
+// them level.
+[[nodiscard]] inline float breakOffHullFraction(PilotRole role)
+{
+    switch (role) {
+    case PilotRole::Covert:
+        return 0.7f;
+    case PilotRole::Trader:
+        return 0.6f;
+    case PilotRole::Patrol:
+        return 0.4f;
+    case PilotRole::Fighter:
+        break;
+    }
+    return 0.3f;
 }
 
 struct RenderShape
@@ -5246,6 +5301,37 @@ private:
     // nobody was looking. This is the roll that closes it, and a patrol posted
     // to the same system is what brings it down.
     void rollHeldBubbleHazard(double dt);
+    // ⚑⚑⚑⚑ THE OTHER CONSEQUENCE OF THE SAME DIE (stage C, the user's ruling
+    // 1). Where a FLEET is posted the loss roll stands down and this runs
+    // instead: the danger that would have taken a captain by arithmetic sends
+    // hulls through a gate to try it in the sky. One rate, two outcomes - a
+    // name in the comms log, or a ship you can shoot at.
+    void rollHeldFleetRaid(SystemBubble& bubble, double dt);
+    // ⚑⚑⚑⚑ THE FINE LAYER, REOPENED FOR EXACTLY THE BUBBLES A FLEET HOLDS.
+    // Phase 38 scoped `pilot_think` to the player's bubble because every
+    // `sol.pilot_*` binding resolves its entity against `playerRegistry()`;
+    // that fence stands. This is the same 2 Hz decision made in C++ against
+    // the bubble it is handed - `tickPatrolBeat`'s own exception, pointed at
+    // the hulls a captain is NOT flying.
+    //
+    // ⚑⚑⚑ AND THE TWO PLAYER-FRAME DECISIONS ARE EXCLUDED BY DEFINITION
+    // RATHER THAN BY A CHECK. `pilot_attack_player` and `pilotEngageEnemy`'s
+    // last clause (`playerHostile(...) && !isDocked()`) both ask where the
+    // player is standing. This pass never runs on the player's bubble, so the
+    // player is not in the sky it is deciding about and there is no such
+    // decision to make - which is a stronger statement than refusing one.
+    void retargetHeldBubble(SystemBubble& bubble, double dt);
+    // Nearest hull in `bubble` that `faction` would shoot, within `reach`.
+    // ⚑ THE PREDICATE IS `pilotHuntTrader`'s PREY ROW, WHICH IS ITSELF
+    // `raidCandidates` ONE LEVEL DOWN: at war with, or relations below
+    // hostile. Deriving it here rather than inventing a third notion of
+    // hostility is what keeps a fight the player flies back to consistent
+    // with the map they read about it on.
+    [[nodiscard]] std::uint32_t nearestBubbleEnemy(const SystemBubble& bubble,
+                                                   std::uint32_t selfIndex,
+                                                   std::uint32_t faction,
+                                                   const sol::core::DVec3& from,
+                                                   double reach) const;
 
 public:
     // The per-second risk a captain posted to `system` is under, which is the
@@ -5253,7 +5339,79 @@ public:
     // it. Zero where nothing of the player's is posted, or where the system is
     // quiet. ⚑ A probe on the MODEL: it is how a patrol's contribution is
     // asserted without racing two worlds against one random stream.
+    //
+    // ⚑⚑⚑⚑ AND ZERO WHERE A FLEET IS POSTED (stage C). That is the
+    // stand-down made provable through the one number both the roll and the
+    // tests read, rather than through a second condition written twice.
     [[nodiscard]] float heldBubbleRiskPerSecond(std::uint32_t system) const;
+    // The per-second rate at which a raid ARRIVES in a system the player has
+    // posted a fleet in - the same `danger * traderLossPerSecond`, and zero
+    // everywhere `heldBubbleRiskPerSecond` is not.
+    //
+    // ⚑⚑⚑ THE GUARD'S HALVING IS DELIBERATELY NOT IN IT. Halving the loss
+    // rate per patrol was a MODEL of a fight nobody could watch; here the
+    // fight is real and the guard is in the sky flying it. A guard does not
+    // stop a clan setting out - it decides how the visit ends - so posting a
+    // fleet does not make a system quieter, it makes what happens there a
+    // fight instead of a funeral.
+    [[nodiscard]] float heldBubbleRaidRatePerSecond(std::uint32_t system) const;
+
+    // ⚑⚑⚑⚑ THE WHOLE RULING IN ONE ROW PER SYSTEM, WHICH IS WHAT MAKES THE
+    // STAGE'S EXIT ASKABLE INSTEAD OF INFERRED (stage C). "The fight actually
+    // happens, with the die roll provably not also running" is two claims
+    // about a system the player cannot see, and neither of them is visible
+    // from inside it: the loss rate is a number nothing prints, and the hulls
+    // are in another registry. `attacking` is the half that matters - hostiles
+    // with a ship of YOURS in their sights - because hostiles merely present
+    // is what Phase 38 already left flying.
+    struct HeldSystemReport
+    {
+        std::uint32_t system = kNoIndex;
+        std::uint32_t posted = 0; // captains of yours holding it open
+        bool fleet = false;       // two or more of them under one commander
+        float lossPerSecond = 0.0f;
+        float raidPerSecond = 0.0f;
+        // ⚑⚑⚑ HOSTILE TO YOUR PEOPLE, NOT MERELY "NOT YOURS" - AND THE FIRST
+        // CUT COUNTED THE SECOND, WHICH READ 10 IN AN EMPTY-LOOKING SKY. A
+        // held system is full of the owner's own patrols and civilian traffic
+        // (`spawnAmbientPilots` fills it at bubble open), so "hulls that are
+        // not the player's" is true before anything has happened and makes any
+        // assertion built on it vacuous. What this counts is hulls that would
+        // shoot at a hull of the player's - the same at-war-or-below-hostile
+        // row `nearestBubbleEnemy` decides on, read against the colours the
+        // player's own captains are wearing.
+        std::uint32_t hostiles = 0;
+        std::uint32_t attacking = 0; // ... of those, ones aimed at a hull of yours
+        // ⚑ AND THE OTHER SIDE OF IT, BECAUSE ONE-SIDED IS THE FAILURE MODE.
+        // A raid that arrives and shoots your miner while the guard flies its
+        // beat is not "the fight happening" - it is the die roll with extra
+        // steps and a longer wait. Hulls of yours in `Attack` is what says the
+        // order the player paid for is being carried out.
+        std::uint32_t guarding = 0;
+    };
+
+    // One row per system the player has captains posted in, in system order.
+    // Empty while nobody is posted anywhere.
+    //
+    // ⚑ NOT CONST, AND THE REASON IS `Registry::storage<T>() const`, WHICH
+    // ASSERTS RATHER THAN RETURNING AN EMPTY POOL. This walks pools in a
+    // bubble that may not have spawned a single ship yet - an unowned system
+    // gets no ambient wing at all - and a probe that fires an assert on a
+    // quiet sky would be a debugging tool that breaks the thing it is pointed
+    // at. The non-const overload creates the pool, which is the honest answer:
+    // there is nothing in it.
+    void heldSystemReport(std::vector<HeldSystemReport>& out);
+
+    // Whether the player has posted a FLEET in this system: two or more
+    // captains of ONE fleet holding it open under stationary orders.
+    //
+    // ⚑⚑⚑⚑ TWO, AND THAT IS WHAT KEEPS THE REVERSAL "EXACTLY THERE AND
+    // NOWHERE ELSE". A single posted captain is the whole of Phase 39 and
+    // keeps ruling 12's die roll unchanged; what buys the fine layer is the
+    // composition - somebody working and somebody covering them - which is
+    // the only arrangement in which a real fight has two sides of the
+    // player's own.
+    [[nodiscard]] bool fleetHeldSystem(std::uint32_t system) const;
     // Which leg of its beat a patrol captain's BODY is flying, across every
     // open bubble, or 0 where there is no body. ⚑ Off the body on purpose:
     // it is the number that moves while nobody is watching, which is what
@@ -5261,6 +5419,17 @@ public:
     // sleeping captain. `captainPuppetInfo` answers the same question for the
     // player's own sky; this one can see the systems they have left.
     [[nodiscard]] std::uint32_t captainBeatLeg(std::size_t captainIndex) const;
+    // Whether this captain's HULL is in a fight right now - shooting at
+    // something, or being shot at - across every open bubble. False where
+    // there is no body.
+    //
+    // ⚑⚑⚑ `captainBeatLeg`'s SHAPE AND ITS REASON (Phase 40 stage C). A fight
+    // in a system the player has left is a fact about a body in another
+    // registry, and until stage C there was no such fact to have: nothing in a
+    // cooled bubble re-targeted. Now there is, and the screen the fleet lives
+    // on has to be able to say so - a raid that arrives, kills a captain and
+    // is only ever reported by the funeral is the die roll with extra steps.
+    [[nodiscard]] bool captainFighting(std::size_t captainIndex) const;
 
 private:
     // Ensures every captain under a stationary order has their system open,

@@ -547,6 +547,26 @@ void fillStationOutfitting(const SpaceWorld& world,
                 status += ", standing down";
             }
         }
+        // ⚑⚑⚑⚑ A FIGHT REPLACES THE ROW RATHER THAN BEING APPENDED TO IT
+        // (Phase 40 stage C), AND BOTH HALVES OF THAT ARE DELIBERATE. Stage C
+        // reopened the fine layer for the systems a fleet is posted in, so for
+        // the first time a captain the player cannot see can be in a real
+        // fight - and the only channel that fact had was a comms line and a
+        // funeral. This is the screen the fleet lives on saying so.
+        //
+        // ⚑⚑⚑ REPLACES, because the detail cell is 590 px - about 67 glyphs of
+        // this font, measured off a screenshot - and the mining arm already
+        // composes "at the rock, 1234.5 Raw Ore aboard, 128 rock(s)" at around
+        // sixty of them. Appending thirteen more is the seventh cell-width bug
+        // of this arc, written by somebody who had just read the notes on the
+        // other six. It is also the better sentence: while a hull is being
+        // shot at, how many rocks it has worked is not the news.
+        if (ordered && hasShip && world.captainFighting(index)) {
+            status = "in a fight";
+            if (captain.order.stopping) {
+                status += ", standing down";
+            }
+        }
         // The floor strip's inputs. ⚑ The live order's value, not the strip's:
         // a player who walks away and comes back sees what their captain is
         // actually holding out for, and the strip re-seats itself onto it.

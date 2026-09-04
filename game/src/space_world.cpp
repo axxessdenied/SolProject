@@ -5710,6 +5710,38 @@ void SpaceWorld::tickEscortCaptains(SystemBubble& bubble, double dt)
     }
 }
 
+bool SpaceWorld::captainFighting(std::size_t captainIndex) const
+{
+    for (const std::unique_ptr<SystemBubble>& bubble : m_bubbles) {
+        const ecs::Registry& registry = bubble->registry;
+        // ⚑⚑ `tryStorage`, NOT `storage`, AND `playerOwnedHull`'s OWN COMMENT
+        // IS THE WARNING: *"`Registry::storage<T>() const` ASSERTS the pool
+        // exists, and a bubble that has never held a captain has no pool to
+        // ask."* Most bubbles have never held one, so for this component the
+        // empty case is the ordinary one rather than the error.
+        const ecs::Pool<CaptainPuppet>* puppetPool = registry.tryStorage<CaptainPuppet>();
+        if (puppetPool == nullptr) {
+            continue;
+        }
+        const ecs::Pool<CaptainPuppet>& puppets = *puppetPool;
+        for (std::size_t i = 0; i < puppets.size(); ++i) {
+            if (puppets.values()[i].captainIndex != captainIndex) {
+                continue;
+            }
+            const std::uint32_t index = puppets.entityIndices()[i];
+            const ShipPilot* pilot = registry.tryGet<ShipPilot>(registry.entityFromIndex(index));
+            if (pilot == nullptr) {
+                continue;
+            }
+            // Both halves, because a guard closing on a raider and a miner
+            // being shot off its rock are the same news to the player and only
+            // one of them has picked a target.
+            return pilot->state == PilotState::Attack || pilot->threatTimer > 0.0f;
+        }
+    }
+    return false;
+}
+
 std::uint32_t SpaceWorld::captainBeatLeg(std::size_t captainIndex) const
 {
     for (const std::unique_ptr<SystemBubble>& bubble : m_bubbles) {
@@ -5726,6 +5758,141 @@ std::uint32_t SpaceWorld::captainBeatLeg(std::size_t captainIndex) const
     return 0;
 }
 
+bool SpaceWorld::fleetHeldSystem(std::uint32_t system) const
+{
+    // ⚑⚑ ASKED OF THE PEOPLE HOLDING THE SYSTEM, NOT OF THE ROSTER. Two
+    // captains of two different fleets in one sky is not a fleet posted here -
+    // it is two orders that happen to have landed in the same place - so the
+    // members are grouped by the commander they answer to before they are
+    // counted. One level is enforced at `setCaptainCommander`, so the root is
+    // one hop away and never a walk.
+    if (system >= m_galaxy.systems.size() || m_captains.size() < 2) {
+        return false;
+    }
+    // ⚑ A LONE CAPTAIN IS THEIR OWN ROOT, WHICH IS WHY NO "ARE THEY IN A FLEET"
+    // TEST IS NEEDED HERE. Somebody who answers to nobody roots at themselves
+    // and can never collide with anybody; two people root together exactly
+    // when one commands the other or both answer to the same person. The pair
+    // loop is the whole rule, and `m_captains` is a handful of people.
+    const auto rootOf = [&](std::size_t i) {
+        const std::size_t boss = captainCommanderIndex(i);
+        return boss < m_captains.size() ? boss : i;
+    };
+    const auto postedHere = [&](std::size_t i) {
+        return stationary(m_captains[i].order.kind) && captainSystem(i) == system;
+    };
+    for (std::size_t i = 0; i < m_captains.size(); ++i) {
+        if (!postedHere(i)) {
+            continue;
+        }
+        for (std::size_t j = 0; j < i; ++j) {
+            if (postedHere(j) && rootOf(j) == rootOf(i)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+void SpaceWorld::heldSystemReport(std::vector<HeldSystemReport>& out)
+{
+    out.clear();
+    for (std::size_t i = 0; i < m_captains.size(); ++i) {
+        if (!stationary(m_captains[i].order.kind)) {
+            continue;
+        }
+        const std::uint32_t system = captainSystem(i);
+        if (system == kNoIndex) {
+            continue;
+        }
+        HeldSystemReport* row = nullptr;
+        for (HeldSystemReport& seen : out) {
+            if (seen.system == system) {
+                row = &seen;
+                break;
+            }
+        }
+        if (row == nullptr) {
+            out.push_back({.system = system,
+                           .fleet = fleetHeldSystem(system),
+                           .lossPerSecond = heldBubbleRiskPerSecond(system),
+                           .raidPerSecond = heldBubbleRaidRatePerSecond(system)});
+            row = &out.back();
+        }
+        ++row->posted;
+    }
+    // The sky, counted off the bubble rather than off the record - which is
+    // this file's standing rule for a two-representation seam, and the only
+    // way to see a hull the coarse layer has no row for at all.
+    for (HeldSystemReport& row : out) {
+        for (const std::unique_ptr<SystemBubble>& bubble : m_bubbles) {
+            if (bubble->system != row.system) {
+                continue;
+            }
+            ecs::Registry& registry = bubble->registry;
+            const ecs::Pool<ShipPilot>& pilots = registry.storage<ShipPilot>();
+            // Whose colours the player's own hulls are wearing here. A captain
+            // has no faction row of their own - the phase spec's diagnosis -
+            // so the hull takes the local government's
+            // (`tickStationaryCaptains`), and that is the row anything in this
+            // sky judges it by.
+            std::uint32_t mine = kNoIndex;
+            for (std::size_t i = 0; i < pilots.size(); ++i) {
+                const std::uint32_t index = pilots.entityIndices()[i];
+                if (!playerOwnedHull(registry, index)) {
+                    continue;
+                }
+                const ShipDefense* defense = registry.storage<ShipDefense>().tryGet(index);
+                if (defense == nullptr || !defense->state.alive()) {
+                    continue;
+                }
+                if (pilots.values()[i].state == PilotState::Attack) {
+                    ++row.guarding;
+                }
+                if (mine == kNoIndex) {
+                    mine = pilots.values()[i].factionIndex;
+                }
+            }
+            for (std::size_t i = 0; i < pilots.size(); ++i) {
+                const std::uint32_t index = pilots.entityIndices()[i];
+                if (playerOwnedHull(registry, index) || isPlayerEntity(registry, index)) {
+                    continue;
+                }
+                const ShipDefense* defense = registry.storage<ShipDefense>().tryGet(index);
+                if (defense == nullptr || !defense->state.alive()) {
+                    continue;
+                }
+                const ShipPilot& pilot = pilots.values()[i];
+                const bool hostile = mine < m_factionTable.size() &&
+                                     pilot.factionIndex < m_factionTable.size() &&
+                                     pilot.factionIndex != mine &&
+                                     (m_factionSim.atWar(pilot.factionIndex, mine) ||
+                                      m_factionSim.relation(pilot.factionIndex, mine) <
+                                          m_factionSim.params().hostileThreshold);
+                if (!hostile) {
+                    continue;
+                }
+                ++row.hostiles;
+                if (pilot.hasTarget != 0 && playerOwnedHullAt(registry, pilot.targetIndex)) {
+                    ++row.attacking;
+                }
+            }
+            break;
+        }
+    }
+}
+
+float SpaceWorld::heldBubbleRaidRatePerSecond(std::uint32_t system) const
+{
+    // The bare rate, and the two callers of `danger` in this file are now the
+    // two halves of one ruling: this one is what a fleet gets, and the halving
+    // one function down is what a lone captain gets.
+    if (system >= m_galaxy.systems.size() || !fleetHeldSystem(system)) {
+        return 0.0f;
+    }
+    return m_factionSim.danger(system) * m_factionSim.params().traderLossPerSecond;
+}
+
 float SpaceWorld::heldBubbleRiskPerSecond(std::uint32_t system) const
 {
     // ⚑⚑ THE NUMBER `rollHeldBubbleHazard` ROLLS AGAINST, AS A QUERY. Stage A's
@@ -5736,6 +5903,16 @@ float SpaceWorld::heldBubbleRiskPerSecond(std::uint32_t system) const
     // itself, so a guard that stopped being counted fails immediately rather
     // than half the time.
     if (system >= m_galaxy.systems.size()) {
+        return 0.0f;
+    }
+    // ⚑⚑⚑⚑ THE STAND-DOWN, AND IT IS ONE LINE BECAUSE THE ROLL AND THE TESTS
+    // BOTH READ THIS NUMBER (stage C, the user's ruling 1). A die roll AND a
+    // real fight in one bubble is the *"a captain that is both things"* defect
+    // the phase's risk register names first, arrived at from the other side -
+    // so where the fine layer reopens, the coarse loss is not merely skipped
+    // by the caller, it does not exist. What danger buys in this system
+    // instead is `heldBubbleRaidRatePerSecond`.
+    if (fleetHeldSystem(system)) {
         return 0.0f;
     }
     const float danger = m_factionSim.danger(system);
@@ -5792,6 +5969,18 @@ void SpaceWorld::rollHeldBubbleHazard(double dt)
         if (slot == 0 || bubble.system >= m_galaxy.systems.size()) {
             continue;
         }
+        // ⚑⚑⚑⚑ AND WHERE A FLEET IS POSTED THE DIE HAS THE OTHER CONSEQUENCE
+        // (stage C, the user's ruling 1). `heldBubbleRiskPerSecond` is already
+        // zero here, so the code below would do nothing at all - and doing
+        // nothing is the defect, not the fix: a stand-down with no producer
+        // beside it would make posting a fleet an invulnerability field, which
+        // is the hole Phase 39 stage D closed one shape over ("a posted
+        // captain was safe precisely because nobody was looking"). So the same
+        // danger sends hulls instead of taking one.
+        if (fleetHeldSystem(bubble.system)) {
+            rollHeldFleetRaid(*m_bubbles[slot], dt);
+            continue;
+        }
         // ⚑⚑⚑ AND A PATROL POSTED HERE IS WHAT BRINGS IT DOWN, WHICH IS THE
         // ORDER'S WHOLE MEANING WHEN THE PLAYER IS NOT THERE TO WATCH IT WORK.
         // The exit's second half - "the same fight happens in a system you left"
@@ -5834,6 +6023,416 @@ void SpaceWorld::rollHeldBubbleHazard(double dt)
     }
 }
 
+void SpaceWorld::rollHeldFleetRaid(SystemBubble& bubble, double dt)
+{
+    const float rate = heldBubbleRaidRatePerSecond(bubble.system) * static_cast<float>(dt);
+    if (rate <= 0.0f) {
+        return;
+    }
+    // ⚑⚑⚑⚑ DANGER HAS NO ANONYMOUS HALF, WHICH IS WHAT MAKES THIS BUILDABLE
+    // AT ALL. `FactionSim::danger` is `raids * dangerPerRaid + pressure *
+    // dangerPerContest` and BOTH terms name a faction - a contest has an
+    // attacker and a raid has a last raider - so a system that is dangerous is
+    // always dangerous because of somebody in particular. The coarse layer
+    // already knew who was coming; until now it only ever reported that they
+    // had been.
+    //
+    // ⚑ The branch is `spawnAmbientPilots`' own, in its order: a contested
+    // system's attacker outranks the last raider, because a standing force is
+    // a larger fact about the sky than a raid that has cooled.
+    const sim::SystemContest contest = m_factionSim.contestOf(bubble.system);
+    std::uint32_t aggressor = kNoIndex;
+    if (m_factionSim.contested(bubble.system) && contest.attacker < m_factionTable.size()) {
+        aggressor = contest.attacker;
+    } else if (const std::uint32_t raider = m_factionSim.lastRaider(bubble.system);
+               raider < m_factionTable.size()) {
+        aggressor = raider;
+    }
+    if (aggressor == kNoIndex) {
+        return; // nobody to send
+    }
+
+    // Who they would be coming for, and where they would find them. ⚑ THE MARK
+    // IS READ BEFORE THE AGGRESSOR IS ACCEPTED, because whether there is
+    // anybody to send is a question about the two of them rather than about
+    // the raider alone.
+    const sim::SystemSpec& spec = m_galaxy.systems[bubble.system];
+    const ecs::Pool<CaptainPuppet>& mine = bubble.registry.storage<CaptainPuppet>();
+    if (mine.size() == 0 || spec.gates.empty()) {
+        return;
+    }
+    const std::uint32_t markIndex = mine.entityIndices()[0];
+    const Transform* mark = bubble.registry.storage<Transform>().tryGet(markIndex);
+    const ShipPilot* markPilot = bubble.registry.storage<ShipPilot>().tryGet(markIndex);
+    const std::size_t markCaptain = mine.values()[0].captainIndex;
+    if (mark == nullptr || markPilot == nullptr || markCaptain >= m_captains.size()) {
+        return;
+    }
+
+    // ⚑⚑⚑⚑ THE TEST IS "HOSTILE TO THE COLOURS MY PEOPLE ARE WEARING", AND THE
+    // FIRST CUT ASKED `aggressor != owner` INSTEAD - WHICH A DRIVE REFUTED IN
+    // ABOUT FOUR MINUTES. `spawnAmbientPilots` uses that comparison and is
+    // right to: it runs at bubble OPEN, when the owner is whoever the sky is
+    // being built for. A held bubble runs for hours, and Lyrth changed hands
+    // mid-drive - `[territory] Lyrth: Norea Reavers takes the system from
+    // Freight Guild` - after which the clan doing the raiding WAS the owner and
+    // the guard stopped being sent for. Meanwhile the captains' hulls still
+    // wore the old government's colours, because a hull's faction is written
+    // once at spawn. So the question that matters is not who holds the ground;
+    // it is whether the people coming would shoot at my ships, which is the
+    // same at-war-or-below-hostile row `nearestBubbleEnemy` decides on.
+    if (markPilot->factionIndex >= m_factionTable.size() || markPilot->factionIndex == aggressor) {
+        return;
+    }
+    const bool wouldShoot =
+        m_factionSim.atWar(aggressor, markPilot->factionIndex) ||
+        m_factionSim.relation(aggressor, markPilot->factionIndex) < m_factionSim.params().hostileThreshold;
+    if (!wouldShoot) {
+        return; // the danger here is somebody else's war
+    }
+
+    // ⚑⚑⚑ THE CEILING IS THE AMBIENT SPAWN'S OWN (three), AND IT IS A CEILING
+    // ON WHAT IS PRESENT RATHER THAN ON WHAT ARRIVES. A held bubble runs for
+    // as long as the order stands - hours - and an arrival rate with no stock
+    // check is an arrival rate that eventually fills a sky. Counting the hulls
+    // that are already here also makes the raid FEEL like one party rather
+    // than a drip: reinforcements come while the fight is on and stop when it
+    // is won.
+    std::uint32_t present = 0;
+    const ecs::Pool<ShipPilot>& pilots = bubble.registry.storage<ShipPilot>();
+    for (std::size_t i = 0; i < pilots.size(); ++i) {
+        if (pilots.values()[i].factionIndex == aggressor) {
+            ++present;
+        }
+    }
+    if (present >= 3 || m_captainRng.nextFloat01() >= rate) {
+        return;
+    }
+
+    // Where they come in. ⚑ A GATE, WHICH IS `tickPatrolBeat`'s OWN SENTENCE
+    // READ BACK: *"anything hostile that is not already here arrives through
+    // one, so a beat that walks them is the difference between a guard and an
+    // ornament."* Arriving anywhere else would make the beat decorative on the
+    // very tick it is supposed to earn its keep.
+    const core::DVec3 arrival =
+        spec.gates[m_captainRng.range(static_cast<std::uint32_t>(spec.gates.size()))].position;
+    const core::DVec3 waypoint = mark->position;
+    const std::size_t before = pilots.size();
+    spawnWing(bubble,
+              aggressor,
+              assets::RosterCell::Raider,
+              factionRoster(m_factionTable[aggressor], assets::RosterCell::Raider, assets::RosterCell::Count),
+              systemSecurityBaseline(bubble.system),
+              1,
+              arrival,
+              600.0,
+              PilotState::Travel,
+              &waypoint);
+    ecs::Pool<ShipPilot>& arrivals = bubble.registry.storage<ShipPilot>();
+    if (arrivals.size() == before) {
+        return; // no roster: nothing arrived, so nothing is announced
+    }
+    // ⚑⚑⚑⚑ THE WING ARRIVES WITH A MARK RATHER THAN A HEADING, AND A LIVE
+    // DRIVE IS WHAT SAID SO. The first cut passed the captain's position to
+    // `spawnWing` as a waypoint and left it at that - and `spawnWing`'s
+    // waypoint parameter also arms `respondTimer`, which is PHASE 30's
+    // RESPONDER clock: a hull that has not arrived within
+    // `kResponseGiveUpSeconds` is put back to Idle because "a call you have
+    // been flying at for three minutes is a call that is over". That is right
+    // for a patrol dispatched to an incident and wrong for a raiding party,
+    // which has not been called anywhere - and the result was a raider that
+    // crossed for three minutes, gave up, and sat in the dark 660 seconds
+    // later while the fleet it came for worked the rock. *The phase's own
+    // recurring finding, for the fifth time: a field borrowed from a
+    // neighbouring system carries the assumptions of the endpoints it was
+    // written for.*
+    //
+    // ⚑ The newly emplaced pilot is the last of the dense array - a sparse set
+    // appends - and `count` is 1, so this is the hull that just arrived.
+    ShipPilot& raider = arrivals.values()[arrivals.size() - 1];
+    raider.respondTimer = 0.0f;
+    raider.targetIndex = markIndex;
+    raider.hasTarget = 1;
+    // ⚑⚑ SAID ON THE SAME CHANNEL A DEATH IS, AND FOR ITS REASON. The player
+    // is two systems away; the console is the only place a thing that happens
+    // to a ship of theirs can reach them. `killCaptain`'s line tells them to
+    // fly back and look at a wreck - this one tells them there is still
+    // something to fly back FOR.
+    say(m_captains[markCaptain].name,
+        std::string("raiders inbound - ") + m_factionTable[aggressor].name + " colours, " +
+            m_galaxy.systems[bubble.system].name);
+    SOL_LOG_INFO("held fleet raid: %s hull arrives in '%s' (%u already here)",
+                 m_factionTable[aggressor].name.c_str(),
+                 m_galaxy.systems[bubble.system].name.c_str(),
+                 present);
+}
+
+std::uint32_t SpaceWorld::nearestBubbleEnemy(const SystemBubble& bubble,
+                                             std::uint32_t selfIndex,
+                                             std::uint32_t faction,
+                                             const core::DVec3& from,
+                                             double reach) const
+{
+    // `nearestPlayerEnemy` pointed the other way, and deliberately NOT a copy
+    // of it: that one asks "is this hostile to the person who hired me",
+    // because a captain has no faction row. This one is asked BY a hull that
+    // does have one, so it can use the ordinary rule - and the ordinary rule
+    // is `pilotHuntTrader`'s prey row, which is `FactionSim::raidCandidates`
+    // one level down: at war with, or relations below hostile.
+    //
+    // ⚑⚑ IT DOES NOT SKIP THE PLAYER'S HULLS, AND THAT IS THE POINT RATHER
+    // THAN AN OVERSIGHT. A captain's hull wears the colours of the ground it
+    // works - `tickStationaryCaptains` sets `factionIndex` from
+    // `systemOwnerFaction` - so a clan that came to raid this system finds the
+    // player's freighter through exactly the rule that finds the government's,
+    // which is what makes a raid on a system a raid on everything in it.
+    if (faction >= m_factionTable.size()) {
+        return kNoIndex;
+    }
+    const ecs::Registry& registry = bubble.registry;
+    const ecs::Pool<ShipPilot>& pilots = registry.storage<ShipPilot>();
+    std::uint32_t best = kNoIndex;
+    double bestDistance = 0.0;
+    for (std::size_t i = 0; i < pilots.size(); ++i) {
+        const std::uint32_t index = pilots.entityIndices()[i];
+        const std::uint32_t other = pilots.values()[i].factionIndex;
+        if (index == selfIndex || other >= m_factionTable.size() || other == faction) {
+            continue;
+        }
+        const bool hostile = m_factionSim.atWar(faction, other) ||
+                             m_factionSim.relation(faction, other) < m_factionSim.params().hostileThreshold;
+        if (!hostile) {
+            continue;
+        }
+        const Transform* transform = registry.storage<Transform>().tryGet(index);
+        const ShipDefense* defense = registry.storage<ShipDefense>().tryGet(index);
+        if (transform == nullptr || defense == nullptr || !defense->state.alive()) {
+            continue;
+        }
+        const double distance = length(transform->position - from);
+        if (distance > reach) {
+            continue;
+        }
+        // Spawn order on a tie, which is `choosePrey`'s rule and
+        // `nearestPlayerEnemy`'s: two hulls handed the same sky agree.
+        if (best == kNoIndex || distance < bestDistance) {
+            bestDistance = distance;
+            best = index;
+        }
+    }
+    return best;
+}
+
+void SpaceWorld::retargetHeldBubble(SystemBubble& bubble, double dt)
+{
+    // ⚑⚑⚑⚑ THE PLAYER IS NOT IN THIS SKY, AND EVERY EXCLUSION BELOW IS THAT
+    // ONE FACT RATHER THAN A LIST OF CASES. Phase 38's ruling scoped
+    // `pilot_think` to `playerRegistry()`; the cost it recorded in its own
+    // words is *"nothing re-targets, breaks off or picks a new beat until the
+    // player is back to watch it"*, and the user's ruling 1 buys that back for
+    // the systems a fleet holds. What it does NOT buy back is the two
+    // decisions that are about where the PLAYER is standing -
+    // `pilot_attack_player`, and `pilotEngageEnemy`'s
+    // `playerHostile(...) && !isDocked()` clause - and it does not refuse
+    // them: this function only ever runs on a bubble the player is absent
+    // from, so there is no player entity here to pick. Excluded by
+    // definition, which is a stronger statement than excluded by a check.
+    //
+    // ⚑⚑⚑ AND WHAT IT COSTS IS A 2 Hz DECISION, WHICH IS THE SPEC'S HEADLINE
+    // MEASURED RATHER THAN ASSUMED. `tickSystem` already runs `sim.pilots`,
+    // both collision passes, impact damage, `sim.projectiles` and
+    // `sim.weapons` for EVERY bubble - the fight in a system the player left
+    // is already simulated at 60 Hz. The only thing Phase 38 scoped out is
+    // this dispatch, and `kThinkInterval` is half a second.
+    ecs::Registry& registry = bubble.registry;
+    ecs::Pool<ShipPilot>& pilots = registry.storage<ShipPilot>();
+    for (std::size_t i = 0; i < pilots.size(); ++i) {
+        ShipPilot& pilot = pilots.values()[i];
+        const std::uint32_t index = pilots.entityIndices()[i];
+        // A hull of the player's is flown by the function that owns its order
+        // - `tickStationaryCaptains`, `tickPatrolBeat`, `syncCaptainPuppets` -
+        // and two writers on one `ShipPilot` is stage D's respawning escort
+        // over again. This pass decides for everybody ELSE in the sky.
+        if (playerOwnedHull(registry, index) || isPlayerEntity(registry, index)) {
+            continue;
+        }
+        pilot.thinkTimer -= static_cast<float>(dt);
+        if (pilot.thinkTimer > 0.0f) {
+            continue;
+        }
+        pilot.thinkTimer = kThinkInterval;
+        const ecs::Entity entity = registry.entityFromIndex(index);
+        const ShipDefense* defense = registry.storage<ShipDefense>().tryGet(index);
+        const Transform* transform = registry.storage<Transform>().tryGet(index);
+        if (defense == nullptr || transform == nullptr || !defense->state.alive()) {
+            continue;
+        }
+        const float hull = defense->tuning.hull > 0.0f ? defense->state.hull / defense->tuning.hull : 0.0f;
+        const auto pips = [&] {
+            if (ShipPower* power = registry.tryGet<ShipPower>(entity); power != nullptr) {
+                power->state.pips = pipsForPilot(pilot.state);
+            }
+        };
+
+        // ⚑⚑⚑⚑ THE BRANCHES BELOW ARE `pilot_think`'s, IN ITS ORDER, AND THE
+        // FIRST CUT OF THIS FUNCTION WAS NOT - WHICH IS THE WHOLE FAILURE MODE
+        // OF REOPENING A LAYER. A single "answer what is shooting, else pick
+        // the nearest enemy" chain is shorter and reads fine, and it made a
+        // CIVILIAN FREIGHTER turn and fight, because "answer the threat" is a
+        // warship's rule. Lua's trader branch says the opposite in its own
+        // comment - *"a hauler is not a warship. It runs the moment something
+        // shoots at it"* - and a hauler that fights in the systems you have
+        // left and runs in the one you are standing in is not one game.
+        //
+        // ⚑⚑⚑ AND THE `state ~= "attack"` GUARD IS COPIED TOO, rather than
+        // improved on. Re-deciding every half second while already in a fight
+        // is a *better* pilot; it is also a different one, and the claim this
+        // stage makes is that the system you left goes on being the same
+        // system. What is added is only the case Lua cannot reach because it
+        // never runs here: an Attack whose target has died, which would
+        // otherwise fly at a ghost for as long as the bubble stays open.
+        const float breakOff = breakOffHullFraction(pilot.role);
+        const bool underFire = pilot.threatTimer > 0.0f;
+        const auto flee = [&] {
+            if (pilot.state != PilotState::Flee) {
+                pilot.state = PilotState::Flee;
+                if (underFire && registry.storage<Transform>().tryGet(pilot.threatIndex) != nullptr) {
+                    pilot.targetIndex = pilot.threatIndex;
+                    pilot.hasTarget = 1;
+                }
+                pips();
+            }
+        };
+
+        if (pilot.role == PilotRole::Trader) {
+            // A hauler runs on the shot rather than on the hull, because
+            // shields take the first hits and a hull-only rule would fly a
+            // freighter calmly through the whole opening exchange. ⚑ It is put
+            // back to Idle when the shooting stops and NOT given a new leg -
+            // the ambient circuit is a Lua-side table keyed by ship handle,
+            // and that bookkeeping stays player-scoped. What reopens here is
+            // the fight, not the errands.
+            if (hull < breakOff || underFire) {
+                flee();
+            } else if (pilot.state == PilotState::Flee) {
+                pilot.state = PilotState::Idle;
+                pilot.hasTarget = 0;
+                pips();
+            }
+            continue;
+        }
+        if (hull < breakOff) {
+            flee();
+            continue;
+        }
+
+        // An Attack that still has something to attack is left alone.
+        if (pilot.state == PilotState::Attack && pilot.hasTarget != 0) {
+            const ShipDefense* mark = registry.storage<ShipDefense>().tryGet(pilot.targetIndex);
+            if (mark != nullptr && mark->state.alive()) {
+                continue;
+            }
+            pilot.state = PilotState::Idle;
+            pilot.hasTarget = 0;
+        }
+
+        // ⚑⚑⚑⚑ AND A HULL THAT IS ALREADY COMING FOR SOMETHING KEEPS COMING,
+        // WHICH IS THE OTHER HALF OF THE DEFECT THE DRIVE FOUND. Everything
+        // below re-decides from `nearestBubbleEnemy`, whose bound is
+        // `preyReach` - twice the gate distance - and a shipped system is
+        // WIDER than that. So a raider that comes in through a gate cannot see
+        // the dock it is heading for, "nothing in reach" reads as "nothing to
+        // do", and the hunt is abandoned one think after it starts. Reach is
+        // the right rule for ACQUIRING a target and the wrong one for keeping
+        // a chase: `preyReach`'s own comment says it exists to refuse "a lock
+        // that geometry already made impossible", and a hull that has already
+        // been given its mark has no geometry problem - it has a distance.
+        //
+        // ⚑ This is `tickPatrolBeat`'s lesson pointed at the other side of the
+        // fight, in that comment's own words: *"the reach is right and the
+        // approach was missing"*. Third time in two phases.
+        if (pilot.hasTarget != 0) {
+            const ShipDefense* mark = registry.storage<ShipDefense>().tryGet(pilot.targetIndex);
+            const Transform* markAt = registry.storage<Transform>().tryGet(pilot.targetIndex);
+            if (mark != nullptr && markAt != nullptr && mark->state.alive()) {
+                const ArmamentSummary guns = armamentSummary(registry, index);
+                const double reach = guns.armed && guns.maxRange > 0.0f ? static_cast<double>(guns.maxRange)
+                                                                        : kTraderArrivalRange;
+                pilot.state = length(markAt->position - transform->position) <= reach ? PilotState::Attack
+                                                                                      : PilotState::Travel;
+                pilot.waypoint = markAt->position;
+                pips();
+                continue;
+            }
+            pilot.hasTarget = 0;
+        }
+
+        // Answer what is shooting first - and re-check the remembered index
+        // before flying at it, because `pilotEngageThreat`'s hazard is the
+        // same here: an index outliving its entity is how a pilot ends up
+        // attacking whatever was spawned into the slot next. ⚑ A PATROL DOES
+        // NOT ASK, which is Lua's shape: its branch has no `pilot_under_fire`
+        // clause at all, because `pilot_engage_enemy` finds the same ship by
+        // the relations matrix and a garrison answers the WAR rather than the
+        // insult.
+        std::uint32_t target = kNoIndex;
+        if (underFire && pilot.role != PilotRole::Patrol) {
+            const ShipDefense* threat = registry.storage<ShipDefense>().tryGet(pilot.threatIndex);
+            if (threat != nullptr && threat->state.alive() &&
+                registry.storage<Transform>().tryGet(pilot.threatIndex) != nullptr) {
+                target = pilot.threatIndex;
+            } else {
+                pilot.threatTimer = 0.0f;
+            }
+        }
+        if (target == kNoIndex) {
+            target = nearestBubbleEnemy(bubble,
+                                        index,
+                                        pilot.factionIndex,
+                                        transform->position,
+                                        sim::preyReach(m_galaxyParams.gateDistance));
+        }
+        if (target == kNoIndex) {
+            // Nothing to shoot. `pilotHuntTrader`'s rule when its prey is gone
+            // and `tickPatrolBeat`'s when the sky is clear: a hull that keeps
+            // its Attack state flies at a ghost for as long as the system
+            // stays quiet.
+            if (pilot.state == PilotState::Attack || pilot.state == PilotState::Flee) {
+                pilot.state = PilotState::Idle;
+                pilot.hasTarget = 0;
+                pips();
+            }
+            continue;
+        }
+
+        // ⚑⚑ TWO STATES, ONE TARGET, AND THE SPLIT IS `pilotHuntTrader`'s WORD
+        // FOR WORD: dogfight steering never leaves the normal envelope while a
+        // system is hundreds of thousands of kilometres across, so a hull told
+        // to "attack" something across the sky closes on it for twenty
+        // minutes. Travel is the cruise drive and already exists for exactly
+        // this distance; weapon range is the handover, and the LONGEST gun
+        // decides it (Phase 31 stage C1).
+        const core::DVec3 mark = registry.storage<Transform>().get(target).position;
+        const double distance = length(mark - transform->position);
+        const ArmamentSummary armament = armamentSummary(registry, index);
+        const double engageRange = armament.armed && armament.maxRange > 0.0f
+                                       ? static_cast<double>(armament.maxRange)
+                                       : kTraderArrivalRange;
+        pilot.targetIndex = target;
+        pilot.hasTarget = 1;
+        pilot.state = distance <= engageRange ? PilotState::Attack : PilotState::Travel;
+        pilot.waypoint = mark;
+        if (pilot.state == PilotState::Travel) {
+            // The give-up clock a dispatched responder runs on, and for its
+            // reason: this waypoint is a ship rather than a place, so a hull
+            // that arrives to find the fight over is handed back to a decision
+            // instead of holding station on an empty point forever.
+            pilot.respondTimer = kResponseGiveUpSeconds;
+        }
+        pips();
+    }
+}
+
 std::uint32_t
 SpaceWorld::nearestPlayerEnemy(const SystemBubble& bubble, const core::DVec3& from, double reach) const
 {
@@ -5859,8 +6458,20 @@ SpaceWorld::nearestPlayerEnemy(const SystemBubble& bubble, const core::DVec3& fr
         if (playerOwnedHull(registry, index) || isPlayerEntity(registry, index)) {
             continue;
         }
-        const bool hostile =
-            pilot.factionIndex >= m_factionTable.size() || m_factionSim.playerHostile(pilot.factionIndex);
+        // ⚑⚑⚑⚑ OR IT HAS A HULL OF YOURS IN ITS SIGHTS, WHICH IS THE CLAUSE
+        // STAGE C ADDS AND IT CLOSES A REAL HOLE RATHER THAN WIDENING A NET.
+        // Standing answers "would this shoot at me"; it cannot answer "is this
+        // shooting at my miner", and the two came apart the moment a raid
+        // arrived in a system a fleet is working. A clan the player has never
+        // met is not `playerHostile`, and its raiders find the captain's hull
+        // through the ordinary faction rule because that hull wears the local
+        // government's colours - so without this line the guard flies its beat
+        // while the ship it was hired to protect burns, and every screen
+        // reports the order working. A guard does not check the paperwork of
+        // something that is already firing on its own fleet.
+        const bool hostile = pilot.factionIndex >= m_factionTable.size() ||
+                             m_factionSim.playerHostile(pilot.factionIndex) ||
+                             (pilot.hasTarget != 0 && playerOwnedHullAt(registry, pilot.targetIndex));
         if (!hostile) {
             continue;
         }
@@ -11218,17 +11829,34 @@ int SpaceWorld::threatTier(std::uint32_t entityIndex) const
 
 GunneryFrame SpaceWorld::gunneryFrame(const ecs::Registry& registry, std::uint32_t entityIndex) const
 {
+    // ⚑⚑⚑⚑ EVERY READ BELOW IS `registry`, AND SEVEN OF THEM SAID
+    // `playerRegistry()` UNTIL PHASE 40 STAGE C - THE SAME DEFECT PHASE 38
+    // STAGE B FIXED IN `spawnWing`, IN THE SAME WORDS: *"`spawnShipAt` was
+    // given the bubble and this line was not."* This function has taken a
+    // registry since it was written and then ignored it, so a ship firing in a
+    // bubble the player is not in had its target looked up in the PLAYER's
+    // registry by a bare entity index. When that index is past the end it is
+    // `entityFromIndex`'s assert and the game stops; when it is not, it is
+    // worse - the guns lay on whatever ship happens to sit at that slot in
+    // another system.
+    //
+    // ⚑⚑⚑ IT WAS UNREACHABLE-ISH RATHER THAN SAFE, AND STAGE C IS WHAT MADE
+    // IT ORDINARY. `trigger` is only true for a ship that is actually firing,
+    // and Phase 38 left a cooled bubble with hulls that go on shooting but
+    // never re-target - so the only way to reach this was a fight already in
+    // progress at the moment the player jumped out. Reopening the fine layer
+    // means fights now START in bubbles nobody is watching, and this fired
+    // within five minutes of the first live drive. *A parameter a function
+    // does not use is not a parameter; it is a comment that compiles.*
     GunneryFrame frame;
     const Transform& transform = registry.storage<Transform>().get(entityIndex);
     frame.position = transform.position;
     frame.orientation = transform.orientation;
     frame.forward = toDVec3(rotate(transform.orientation, core::Vec3{0.0f, 0.0f, -1.0f}));
-    if (const FlightBody* body = playerRegistry().storage<FlightBody>().tryGet(entityIndex);
-        body != nullptr) {
+    if (const FlightBody* body = registry.storage<FlightBody>().tryGet(entityIndex); body != nullptr) {
         frame.velocity = body->velocity;
     }
-    if (const RenderShape* shape = playerRegistry().storage<RenderShape>().tryGet(entityIndex);
-        shape != nullptr) {
+    if (const RenderShape* shape = registry.storage<RenderShape>().tryGet(entityIndex); shape != nullptr) {
         frame.hullScale = static_cast<double>(shape->scale.x);
     }
 
@@ -11255,29 +11883,32 @@ GunneryFrame SpaceWorld::gunneryFrame(const ecs::Registry& registry, std::uint32
     // An NPC needs no such gate: its pilot's target IS its enemy, chosen by
     // the Lua brain that decided to attack.
     std::uint32_t targetIndex = kNoIndex;
-    if (isPlayerEntity(playerRegistry(), entityIndex)) {
+    // ⚑ THE SELECTION BRANCH IS PLAYER-SCOPED BY DEFINITION RATHER THAN BY A
+    // CHECK: the player's entity lives in exactly one registry, so
+    // `isPlayerEntity(registry, ...)` can only be true when `registry` IS the
+    // player's - and `targetShipEntityIndex` and `threatTier` beneath it are
+    // then reading the frame they belong to.
+    if (isPlayerEntity(registry, entityIndex)) {
         targetIndex = targetShipEntityIndex();
         if (targetIndex != kNoIndex && threatTier(targetIndex) > kHostileThreatTier) {
             targetIndex = kNoIndex;
         }
         // Through the registry rather than through the pool - see `threatTier`
         // for why a const reader of this pool must tolerate its absence.
-    } else if (const ShipPilot* pilot =
-                   playerRegistry().tryGet<ShipPilot>(playerRegistry().entityFromIndex(entityIndex));
+    } else if (const ShipPilot* pilot = registry.tryGet<ShipPilot>(registry.entityFromIndex(entityIndex));
                pilot != nullptr && pilot->hasTarget != 0) {
         targetIndex = pilot->targetIndex;
     }
     if (targetIndex == kNoIndex) {
         return frame;
     }
-    const Transform* targetTransform = playerRegistry().storage<Transform>().tryGet(targetIndex);
+    const Transform* targetTransform = registry.storage<Transform>().tryGet(targetIndex);
     if (targetTransform == nullptr) {
         return frame;
     }
     frame.hasTarget = true;
     frame.targetPosition = targetTransform->position;
-    if (const FlightBody* body = playerRegistry().storage<FlightBody>().tryGet(targetIndex);
-        body != nullptr) {
+    if (const FlightBody* body = registry.storage<FlightBody>().tryGet(targetIndex); body != nullptr) {
         frame.targetVelocity = body->velocity;
     }
     return frame;
@@ -13332,7 +13963,6 @@ double SpaceWorld::shipHullFraction(ecs::Entity entity) const
 void SpaceWorld::collectDuePilotThinks(double dt, std::vector<PilotThink>& out)
 {
     static constexpr const char* kStateNames[] = {"idle", "patrol", "attack", "flee", "travel", "inspect"};
-    constexpr float kThinkInterval = 0.5f; // 2 Hz strategy; steering runs at 60
 
     // Notice (Phase 36 stage B) rides the same pass and for the same reason:
     // it needs a dt, it needs every pilot visited once, and it is throttled.
@@ -13841,6 +14471,7 @@ void SpaceWorld::tickPlayerFlightInput(double dt)
 // this function, so nesting the tick costs no per-system copy of any of them -
 // and `sim::resolveCollisions` is O(n^2) with no broadphase, so k systems cost
 // k*n^2 here where one global list with a frame filter would cost (kn)^2.
+
 void SpaceWorld::tickSystem(SystemBubble& bubble, double dt)
 {
     ecs::Registry& registry = bubble.registry;
@@ -13865,6 +14496,17 @@ void SpaceWorld::tickSystem(SystemBubble& bubble, double dt)
     // through, and `m_avoidance` describes exactly one system at a time now.
     if (playersBubble) {
         tickPlayerFlightInput(dt);
+    }
+    // ⚑⚑⚑⚑ AND THE FINE LAYER, FOR EXACTLY THE BUBBLES A FLEET IS POSTED IN
+    // (Phase 40 stage C, the user's ruling 1). Here rather than in `tick`'s
+    // bubble loop because it is a decision about THIS sky and must be made
+    // before this sky is steered - the same placement, and the same reason, as
+    // the avoidance rebuild directly above. `playersBubble` is the whole of
+    // the exclusion: Lua already thinks for that one, and two dispatches over
+    // one pilot pool would be two writers on one `ShipPilot`.
+    if (!playersBubble && fleetHeldSystem(bubble.system)) {
+        SOL_PROFILE_ZONE_NAMED(retargetZone, "sim.held.retarget");
+        retargetHeldBubble(bubble, dt);
     }
 
     // NPC pilots: C++ steering flies whatever state Lua's pilot_think chose.

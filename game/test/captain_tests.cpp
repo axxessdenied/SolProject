@@ -3852,3 +3852,254 @@ SOL_TEST(standing_a_fleet_down_ends_every_members_order)
     // And it is said to the commander: a subordinate is told whose door it is.
     SOL_CHECK(!w.standFleetDown(roles.miner));
 }
+
+// --- The fine layer reopened (Phase 40 stage C) ------------------------------
+//
+// ⚑⚑⚑⚑ THE CLAIM THESE TESTS EXIST FOR IS A NEGATIVE AND A POSITIVE THAT MUST
+// HOLD IN THE SAME BUBBLE AT THE SAME TIME: the coarse die roll is NOT running
+// where a fleet is posted, and something is happening there instead. Either one
+// alone is easy and wrong. A stand-down with no producer beside it makes
+// posting a fleet an invulnerability field - which is the hole Phase 39 stage D
+// closed one shape over, "a posted captain was safe precisely because nobody
+// was looking" - and a fight that runs while the roll also runs is the "a
+// captain that is both things" defect the phase's risk register names first.
+
+namespace {
+
+// Points `raider` at `system` for real, through the coarse layer's own door
+// rather than by poking its arrays: `commitRaid` validates the target against
+// `raidCandidates`, so a faction that could not reach this system is refused
+// here exactly as it would be in the running game. Returns the faction, or
+// kNone if nobody in the galaxy can raid this place.
+[[nodiscard]] std::uint32_t raidThisSystem(SpaceWorld& w, std::uint32_t system)
+{
+    const std::uint32_t owner = w.systemOwnerFaction(system);
+    for (std::uint32_t f = 0; f < w.factions().size(); ++f) {
+        if (f == owner) {
+            continue;
+        }
+        // Hostile enough to be a candidate. Relations are what `raidCandidates`
+        // filters on, so this is the same lever a decade of faction_think would
+        // have pulled slowly.
+        w.factionSim().setRelation(f, owner, -100.0f);
+        if (w.commitFactionRaid(f, system)) {
+            return f;
+        }
+    }
+    return kNone;
+}
+
+} // namespace
+
+// ⚑⚑⚑⚑ ONE NUMBER, TWO OUTCOMES, AND NEVER BOTH. `heldBubbleRiskPerSecond` is
+// what the loss roll rolls against and `heldBubbleRaidRatePerSecond` is what
+// the arrival rolls against; the whole of the user's ruling 1 is which of them
+// a system gets. The anti-vacuity half is the one that matters here: the SAME
+// two captains in the SAME system with the SAME danger flip back to the die
+// roll the moment they stop being one fleet, so this cannot pass by the rates
+// being zero, or nonzero, everywhere.
+SOL_TEST(a_posted_fleet_stands_the_die_roll_down_and_two_strangers_keep_it)
+{
+    Fixture fixture;
+    const Dock dock = findMiningDock(fixture);
+    SOL_REQUIRE(dock.system != kNone);
+    SOL_REQUIRE(fixture.walkIn(dock));
+    SpaceWorld& w = fixture.world();
+
+    const ThreeRoles roles = buildThreeRoleFleet(fixture);
+    SOL_REQUIRE(roles.commander != kNone);
+    w.addCredits(1'000'000.0);
+    SOL_REQUIRE(w.buyMarketIntel());
+    SOL_REQUIRE(w.orderFleetWork(roles.commander));
+    w.factionSim().setRaidIntensity(dock.system, 1.0f);
+
+    // The miner and the guard hold this system; the hauler is on a lane. Two of
+    // one fleet is what the predicate is about, and it is what the fleet order
+    // produces without being asked to.
+    SOL_CHECK(w.fleetHeldSystem(dock.system));
+    const float raid = w.heldBubbleRaidRatePerSecond(dock.system);
+    std::printf("  fleet posted: loss %.5f/s, raid %.5f/s\n",
+                static_cast<double>(w.heldBubbleRiskPerSecond(dock.system)),
+                static_cast<double>(raid));
+    SOL_CHECK(w.heldBubbleRiskPerSecond(dock.system) == 0.0f);
+    SOL_CHECK(raid > 0.0f);
+
+    // ⚑⚑ AND THE SAME SKY WITHOUT THE FLEET. Nothing moves, nobody stands down
+    // and the danger is untouched - the guard simply stops answering to the
+    // commander. A rule that read "two captains here" rather than "two captains
+    // of one fleet here" passes everything above and fails this line.
+    SOL_REQUIRE(w.clearCaptainCommander(roles.guard));
+    SOL_CHECK(!w.fleetHeldSystem(dock.system));
+    std::printf("  two strangers: loss %.5f/s, raid %.5f/s\n",
+                static_cast<double>(w.heldBubbleRiskPerSecond(dock.system)),
+                static_cast<double>(w.heldBubbleRaidRatePerSecond(dock.system)));
+    SOL_CHECK(w.heldBubbleRiskPerSecond(dock.system) > 0.0f);
+    SOL_CHECK(w.heldBubbleRaidRatePerSecond(dock.system) == 0.0f);
+
+    // ⚑ THE GUARD'S HALVING IS NOT IN THE RAID RATE, AND THIS IS WHERE THAT IS
+    // SAID IN NUMBERS. Halving per patrol was a MODEL of a fight nobody could
+    // watch; the fleet's rate is the BARE one, because the guard is in the sky
+    // flying it instead of being priced. So a fleet is visited more often than
+    // a guarded pair would have been - it just survives the visit.
+    SOL_CHECK(raid > w.heldBubbleRiskPerSecond(dock.system));
+    SOL_REQUIRE(w.setCaptainCommander(roles.guard, roles.commander));
+    SOL_CHECK(w.fleetHeldSystem(dock.system));
+}
+
+// ⚑⚑⚑⚑ THE STAGE'S EXIT, ASSERTED FROM TWO SYSTEMS AWAY. Post a fleet, walk
+// out, and what arrives is hulls rather than a comms line about a funeral -
+// then the raider picks a ship of the player's out of the sky and the guard
+// answers. Every one of those four facts is invisible from the cockpit, which
+// is what `heldSystemReport` exists for.
+SOL_TEST(a_raid_on_a_held_fleet_arrives_as_hulls_and_the_fight_actually_happens)
+{
+    Fixture fixture;
+    const Dock dock = findMiningDock(fixture);
+    SOL_REQUIRE(dock.system != kNone);
+    SOL_REQUIRE(fixture.walkIn(dock));
+    SpaceWorld& w = fixture.world();
+
+    const ThreeRoles roles = buildThreeRoleFleet(fixture);
+    SOL_REQUIRE(roles.commander != kNone);
+    w.addCredits(1'000'000.0);
+    SOL_REQUIRE(w.buyMarketIntel());
+    SOL_REQUIRE(w.orderFleetWork(roles.commander));
+
+    const std::uint32_t aggressor = raidThisSystem(w, dock.system);
+    SOL_REQUIRE(aggressor != kNone);
+    std::printf("  %s raids %s, where the fleet is working\n",
+                w.factions()[aggressor].name.c_str(),
+                w.galaxy().systems[dock.system].name.c_str());
+
+    // Two systems away, on the phase's own shape: the order holds the bubble
+    // open over the cap, so what happens next happens where nobody is looking.
+    const Dock elsewhere = fixture.findDock(screenBit(StationScreen::Trade), 0, dock);
+    SOL_REQUIRE(elsewhere.system != kNone && elsewhere.system != dock.system);
+    SOL_REQUIRE(fixture.walkIn(elsewhere));
+    SOL_REQUIRE(w.systemIsInstantiated(dock.system));
+
+    // ⚑ THE STANDING IS CLEAN, AND THAT IS THE POINT RATHER THAN THE SETUP. The
+    // player has never met this clan, so `playerHostile` is false and stage D's
+    // hostility rule cannot see the raid at all. What makes it a fight is that
+    // the raider has a hull of the player's in its sights.
+    SOL_CHECK(!w.factionSim().playerHostile(aggressor));
+
+    const std::size_t people = w.captains().size();
+    std::vector<SpaceWorld::HeldSystemReport> report;
+    const auto here = [&]() -> SpaceWorld::HeldSystemReport {
+        w.heldSystemReport(report);
+        for (const SpaceWorld::HeldSystemReport& row : report) {
+            if (row.system == dock.system) {
+                return row;
+            }
+        }
+        return {};
+    };
+    // ⚑⚑⚑ THE BASELINE IS TAKEN RATHER THAN ASSUMED TO BE ZERO, AND THE
+    // FIRST CUT OF THIS TEST ASSUMED IT. A raided system's bubble is opened
+    // with an incursion wing already in it (`spawnAmbientPilots` reads the
+    // same raid intensity), so "there is a hostile hull here" can be true
+    // before a single tick of this stage has run. What only `rollHeldFleetRaid`
+    // can produce is the sky getting BUSIER while the player is elsewhere.
+    const std::uint32_t baseline = here().hostiles;
+    std::printf("  on walking out: %u hostile hull(s), %u on your people\n", baseline, here().attacking);
+    SOL_REQUIRE(runUntil(
+        w,
+        [&] {
+            w.factionSim().setRaidIntensity(dock.system, 1.0f);
+            return here().hostiles > baseline;
+        },
+        40000));
+    std::printf("  reinforcements arrived: %u hull(s) in the sky\n", here().hostiles);
+
+    // ⚑⚑ AND THE ROLL IS PROVABLY NOT ALSO RUNNING, WHICH IS HALF THE EXIT.
+    // Nobody has been taken by arithmetic while all that was happening, and the
+    // number the roll would have read is still zero with the sky full.
+    SOL_CHECK(w.captains().size() == people);
+    SOL_CHECK(w.heldBubbleRiskPerSecond(dock.system) == 0.0f);
+
+    // The fight itself: something aimed at a ship of the player's, and a ship
+    // of the player's aiming back.
+    SOL_REQUIRE(runUntil(
+        w,
+        [&] {
+            w.factionSim().setRaidIntensity(dock.system, 1.0f);
+            return here().attacking > 0;
+        },
+        20000));
+    std::printf("  %u raider(s) on your people\n", here().attacking);
+    SOL_REQUIRE(runUntil(
+        w,
+        [&] {
+            w.factionSim().setRaidIntensity(dock.system, 1.0f);
+            return here().guarding > 0;
+        },
+        20000));
+    std::printf("  %u hull(s) of yours fighting back\n", here().guarding);
+
+    // ⚑⚑⚑⚑ AND IT HAS TO FINISH, WHICH IS WHERE THE STAGE'S ONE LIVE CRASH
+    // WAS FOUND. Starting a fight only needs a target to be chosen; RESOLVING
+    // one runs the whole per-system weapons pass in a bubble the player is not
+    // in, tick after tick, and that is the pass whose `gunneryFrame` had been
+    // reading the PLAYER's registry with a bare entity index since it was
+    // written. It survived because Phase 38 left cooled bubbles with hulls that
+    // shoot but never re-target, so the only way to reach it was a fight
+    // already in progress at the moment of the jump. Here it is the ordinary
+    // case, and the assertion is the honest end of the exit: the raid is
+    // beaten and the people the player hired are still alive.
+    SOL_REQUIRE(runUntil(
+        w,
+        [&] {
+            w.factionSim().setRaidIntensity(dock.system, 1.0f);
+            return here().hostiles == 0;
+        },
+        40000));
+    std::printf("  the sky over the fleet is clear again, %zu captain(s) alive\n", w.captains().size());
+    SOL_CHECK(w.captains().size() == people);
+    SOL_CHECK(w.heldBubbleRiskPerSecond(dock.system) == 0.0f);
+}
+
+// ⚑⚑⚑ A DRIFT GUARD RATHER THAN A BEHAVIOUR TEST, AND IT IS THE PRICE OF
+// HAVING WRITTEN THE THRESHOLDS DOWN TWICE. `pilot_think` breaks a pilot off
+// its fight at a hull fraction that is CHARACTER - Phase 37's covert raider
+// leaves with 70% of its hull still on, and that line is the whole difference
+// between it and a timid fighter - and `retargetHeldBubble` has to use the same
+// numbers or a fight ends differently depending on whether the player is
+// watching it, which is the one thing this stage must not ship. The script is
+// player-facing content and stays the source of truth; this is what fails when
+// somebody edits it.
+SOL_TEST(a_fight_nobody_watches_breaks_off_where_a_watched_one_does)
+{
+    std::vector<std::uint8_t> bytes;
+    SOL_REQUIRE(sol::platform::readFileBytes(SOL_DEF_DATA_DIR "/scripts/init.lua", bytes));
+    const std::string script(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+
+    struct Rule
+    {
+        game::PilotRole role;
+        const char* name;
+    };
+
+    const Rule rules[] = {{game::PilotRole::Fighter, "fighter"},
+                          {game::PilotRole::Trader, "trader"},
+                          {game::PilotRole::Patrol, "patrol"},
+                          {game::PilotRole::Covert, "covert"}};
+    for (const Rule& rule : rules) {
+        char needle[32] = {};
+        std::snprintf(needle,
+                      sizeof(needle),
+                      "hull < %.1f",
+                      static_cast<double>(game::breakOffHullFraction(rule.role)));
+        const std::size_t at = script.find(needle);
+        std::printf("  %s breaks off at '%s': %s\n",
+                    rule.name,
+                    needle,
+                    at == std::string::npos ? "MISSING" : "in init.lua");
+        SOL_CHECK(at != std::string::npos);
+        // ⚑ ONCE, NOT AT LEAST ONCE. Four roles and four distinct numbers is
+        // what makes the table a table; the day two roles share a threshold
+        // this test stops being able to tell which branch it matched, and that
+        // is worth being told about rather than passing quietly.
+        SOL_CHECK(script.find(needle, at + 1) == std::string::npos);
+    }
+}

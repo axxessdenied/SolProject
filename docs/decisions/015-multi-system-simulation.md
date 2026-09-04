@@ -202,6 +202,21 @@ layer.**
   one bubble is *"a captain that is both things"* — the defect Phase 39's risk
   register names first — reached from the opposite side, and nothing in the 440
   tests asks the question.
+- **⚑⚑⚑⚑ AND STANDING THE ROLL DOWN IS ONLY HALF A RULING, WHICH BUILDING IT
+  IS WHAT SHOWED (Phase 40 stage C, 2026-09-04).** A stand-down with nothing
+  put in its place makes posting a fleet an **invulnerability field**: the
+  coarse layer stops touching the system, and the fine layer has no producer of
+  its own — `spawnAmbientPilots` fills a sky once, at bubble open, and a held
+  bubble never re-opens. That is Phase 39 stage D's *"a posted captain was safe
+  precisely because nobody was looking"* re-created from the other side, one
+  phase after it was closed. **So the ruling is that the same danger has a
+  different CONSEQUENCE where a fleet is posted, not that it stops**: one rate,
+  and it either takes a captain by arithmetic or sends hulls through a gate to
+  try it. ⚑ The arrival rate is the **bare** one — `heldBubbleRiskPerSecond`'s
+  halving per guard was a *model* of a fight nobody could watch, and modelling
+  the guard while the guard is in the sky flying it would price it twice. A
+  fleet is therefore visited **more often** than a guarded pair would have
+  been; what it buys is surviving the visit.
 - **⚑⚑⚑ AND THE COST ARGUMENT MOVED IN THE CHEAP DIRECTION FOR THE SECOND
   CONSECUTIVE AMENDMENT, ON A DIFFERENT AXIS.** The one above measured held
   *systems* at ~0.12 ms each, linear. A fleet is the other axis — N hulls in ONE
