@@ -1,9 +1,11 @@
 # 015 — A ship you own exists whether or not you are looking at it
 
 - **Date**: 2026-08-28
-- **Status**: accepted; **amended twice on 2026-09-02** — the first bullet of the
-  Decision by the Phase 38 spec, and the second bullet by the Phase 39 spec (see
-  the two “Amendment” sections below). The decision itself stands.
+- **Status**: accepted; **amended three times** — twice on 2026-09-02 (the first
+  bullet of the Decision by the Phase 38 spec, the second bullet by the Phase 39
+  spec) and once on 2026-09-03 (the Phase 40 spec, which reopens the fine layer
+  where the player has posted a fleet). See the “Amendment” sections below.
+  The decision itself stands.
 
 ## Context
 
@@ -168,6 +170,51 @@ stationary captain's crossing is paced at
 borrowed from the constant whose own comment says *"in-system travel per
 endpoint"*. The split is about where the RECORD lives, not about who is allowed
 to use the coarse fleet's arithmetic.
+
+### Amendment, 2026-09-03 (Phase 40 spec) — the fine layer reopens where the player has posted a fleet
+
+**Phase 39's ruling 12 said an unwatched fight is a die roll. This reverses that
+for one case — a system the player has posted a FLEET in — and the re-read that
+priced the reversal found the original ruling had been argued against the wrong
+layer.**
+
+- **⚑⚑⚑⚑ THE PER-FRAME COST OF AN UNWATCHED FIGHT IS ALREADY PAID.**
+  `rollHeldBubbleHazard`'s own comment justifies the coarse pricing by saying the
+  alternative *"pays per-frame for a fight nobody is watching"*. It does not.
+  `tickSystem` runs for **every** bubble, and `sim.pilots`, `sim.collision.build`,
+  `sim.collision.resolve`, impact damage, `sim.projectiles` and `sim.weapons` are
+  all inside it — which is Phase 38's own statement of the consequence, in its
+  own words: *"A raider in Attack goes on attacking, guns keep firing, hulls keep
+  taking damage — the fight continues — but nothing re-targets."* What Phase 38
+  scoped out is `collectDuePilotThinks`, and `kThinkInterval` is **0.5 s**. So
+  reopening buys a **2 Hz decision**, not a 60 Hz combat bill.
+- **⚑⚑⚑ THE REAL OBSTACLE IS THE REGISTRY FRAME, WHICH IS THIS DOC'S OWN
+  DECISION WORKING AS INTENDED.** The nine `sol.pilot_*` bindings answer through
+  world functions that read `playerRegistry()` **25 times** between them, and two
+  of the nine are player-frame *by definition* — `pilot_attack_player`, and
+  `pilotEngageEnemy`'s clause that asks whether the player is docked. The frame
+  being a property of the registry is what makes the cross-registry reach
+  unaskable; reopening therefore happens **in C++, per bubble**, which is the
+  exception Phase 39 already carved for `tickStationaryCaptains` and
+  `tickPatrolBeat`, pointed the other way. **Lua stays player-scoped.**
+- **⚑⚑ THE DIE ROLL MUST STAND DOWN FOR EXACTLY THOSE SYSTEMS.**
+  `rollHeldBubbleHazard` skips slot 0 and only slot 0. A roll and a real fight in
+  one bubble is *"a captain that is both things"* — the defect Phase 39's risk
+  register names first — reached from the opposite side, and nothing in the 440
+  tests asks the question.
+- **⚑⚑⚑ AND THE COST ARGUMENT MOVED IN THE CHEAP DIRECTION FOR THE SECOND
+  CONSECUTIVE AMENDMENT, ON A DIFFERENT AXIS.** The one above measured held
+  *systems* at ~0.12 ms each, linear. A fleet is the other axis — N hulls in ONE
+  system, where `resolveCollisions` is quadratic. Measured 2026-09-03 (debug, 600
+  frames, one held bubble across 24 shipped systems, baseline 0.067 ms):
+  **hulls 0.00204 ms each with r² 0.010; entities 0.00199 ms each with r² 0.836.**
+  Hulls explain one percent of the variance and entities eighty-four — system 8
+  is 15 hulls in 25 entities for 0.155 ms, system 11 is 5 hulls in 136 entities
+  for 0.350 ms. **A bubble costs what is in it, and a hull is one entity much as
+  a rock is.** Six captains added to a system is about 0.012 ms. *The quadratic
+  term is over movers, which the shipped galaxy tops out at 15 — 105 pairs — and
+  it is not detectable at that scale.* **So fleet size is a design limit, not a
+  frame-budget one.**
 
 ## Alternatives considered
 

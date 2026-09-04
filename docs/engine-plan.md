@@ -3362,7 +3362,7 @@ Every clause is true of the nine `.wav` cues today, and the script has said so s
 
 **Suites: `platform.unit` 27 → 35, `game.unit` 41 → 59.** Windows dev 13/13 + dev-gpu 2/2, release 17/17 + release-gpu 5/5; clang-format clean by exit code.
 
-### The Depth Arc — Phases 28–41 📋 (planned 2026-08-28; **28 through 39 SHIPPED**, 40 and 41 are sketches to be spec'd before starting)
+### The Depth Arc — Phases 28–41 📋 (planned 2026-08-28; **28 through 39 SHIPPED, 40 spec'd**, 41 is a sketch to be spec'd before starting)
 
 **From the user, 2026-08-28**, as eleven asks in one message: ship classes by size and role; parts, upgrades and subsystems; hardpoints on hulls with Forge authoring and in-game visuals; stations built from modules; a wider material tree with contraband; a black-market faction; transponders and running dark; authored systems and constellations for narrative control; ship commands with a right-click menu; multiple owned ships, captains and fleets; and station lore with characters who know things.
 
@@ -5042,13 +5042,99 @@ Five, one per ruling plus the two halves of the representation. **The user took 
 
 ---
 
-#### Phase 40 — Fleets and Formations
+#### Phase 40 — Fleets and Formations 📋 (spec'd 2026-09-03)
 
-**Depends on**: 39. **v2.**
+**Depends on**: 39 for the captain, 38 for the bubble. **v2.** ⚑ **Spec'd 2026-09-03 against a fresh re-read of the code — the thirty-fourth consecutive roadmap estimate the practice has moved**, and the sixth in a row moved *before* a line was written. ⚑⚑ **It moves one of this project's own rulings, and in the CHEAP direction**: Phase 39's ruling 12 refused the fine layer on a cost argument that names the wrong layer.
 
-`steerFormation` exists. What does not is a fleet: a commander, a customisable formation, and an order the fleet resolves *according to what it is made of*. A mining fleet told to work a field does not need to be told that miners stay at the rock, haulers shuttle to the refinery and escorts split to cover both — that is what the composition means.
+**The sketch this replaces, quoted rather than deleted.** *Depends on*: "39. **v2.**" *Diagnosis*: "`steerFormation` exists. What does not is a fleet: a commander, a customisable formation, and an order the fleet resolves *according to what it is made of*. A mining fleet told to work a field does not need to be told that miners stay at the rock, haulers shuttle to the refinery and escorts split to cover both — that is what the composition means." *Exit*: "a three-role mining fleet works a field unattended and defends itself when raided, with no per-ship orders given."
 
-**Exit**: a three-role mining fleet works a field unattended and defends itself when raided, with no per-ship orders given.
+**The diagnosis is right about what is missing and wrong about what exists. The exit is buildable — but only by reversing a ruling this project took eleven days ago, which the user has done; and the re-read then found that ruling had been priced against the wrong layer.**
+
+##### ⚑⚑⚑⚑ The headline: the per-frame cost of an unwatched fight is ALREADY PAID, and ruling 12 named the wrong layer
+
+`rollHeldBubbleHazard`'s own comment is the justification for pricing an unwatched fight as a die roll: the alternative *"contradicts Phase 38's ruling in its own words and **pays per-frame for a fight nobody is watching**."* **The second clause is false.** `tickSystem` runs for *every* bubble, and inside it are `sim.pilots` (steering), `sim.collision.build`, `sim.collision.resolve`, impact damage, `sim.projectiles` and `sim.weapons`. Phase 38's own comment says as much out loud: *"A raider in Attack goes on attacking, guns keep firing, hulls keep taking damage — the fight continues — but nothing re-targets, breaks off or picks a new beat until the player is back to watch it."*
+
+**So the fight already runs at 60 Hz in a bubble the player has left. What Phase 38 scoped out is `collectDuePilotThinks`, and `kThinkInterval` is 0.5 s — a 2 Hz decision.** Reopening the fine layer for a system the player has posted a fleet in does not buy a per-frame combat bill. It buys a **twice-a-second decision** for hulls that are already flying and already shooting.
+
+⚑⚑⚑ **The real obstacle is not cost, it is the registry frame.** The nine `sol.pilot_*` bindings answer through world functions that read `playerRegistry()` **25 times** between them; `pilotEngageEnemy` alone reads it six. And two of the nine cannot be re-pointed at all: **`pilot_attack_player` is player-frame by definition**, and `pilotEngageEnemy`'s last clause — `playerHostile(...) && !isDocked()` then `consider(playerEntityIndex())` — asks where the player is standing. *This is the phase's version of Phase 39's four-times-repeated finding: a rule borrowed from a neighbouring system carries the assumptions of the endpoints it was written for.*
+
+##### The numbers, measured 2026-09-03
+
+| | |
+| --- | ---: |
+| `steerFormation` call sites — total / outside the player's own hull | **3** / **0** |
+| `cruiseCaptainToward` call sites (how a captain actually crosses a system) | **9** |
+| `sol.pilot_*` bindings / `playerRegistry()` reads in their world functions | **9** / **25** |
+| Of those nine, ones that are player-frame *by definition* | **2** |
+| `kThinkInterval` — the decision Phase 38 scoped out | **0.5 s (2 Hz)** |
+| Systems `rollHeldBubbleHazard` skips | **1** (slot 0, and only slot 0) |
+| `OrderKind` values after Phase 39 | **5** |
+| Cap on `m_fleet` size, anywhere in the tree | **none** |
+| `kMaxInstantiatedSystems` / systems in the shipped galaxy | **6** / **80** |
+| `game.unit` / `kSaveVersion` at the spec | **440** / **45** |
+
+##### ⚑⚑⚑⚑ `steerFormation` exists and has never had a non-player consumer — and captain hulls do not steer at all
+
+**Three call sites, all inside `standingCommandInput`**: `MatchSpeed`, `Follow`, `Hold`. Every one is the **player's own hull** flying a Phase 28 command mode. No NPC, no captain and no ambient wing has ever flown a formation. The sketch's *"`steerFormation` exists"* is true and reads as *"the primitive is wired up"*, which it is not.
+
+⚑⚑ **And the ship a formation would be flown by does not use the steering seam.** A captain's hull crosses its system through `cruiseCaptainToward`, which writes `transform->position` and `previousPosition` directly and hands the hull to its own steering only inside `kCaptainCruiseInside`. That pacing exists for a measured reason — Phase 39 stage C's first cut handed the hull over ten kilometres out and destroyed one per crossing — so the *interesting* part of a captain's flight is a position write, not a `FlightInput`.
+
+**So "a customisable formation" is a first consumer of a ten-line function, not a re-use.** At the scale a captain travels (`gateDistance` 6.0e8 m) there is nothing for a formation to look like anyway. A formation means something exactly where hulls are close together and steering: at the rock, at the dock, and in a fight.
+
+##### ⚑⚑⚑ The cost axis Phase 39 measured is not this phase's axis, and the one that is turns out to be nearly free
+
+Phase 39 shipped `what_a_bubble_costs_per_frame_past_the_cap` and measured **~0.12 ms per held SYSTEM, linear**, noting that `resolveCollisions` is O(n²) *inside* a bubble while bubbles cannot see each other. **A fleet is the other axis: N captains in ONE system** — one bubble (the cheap direction) but N more hulls in one sky (the quadratic one). Nothing had measured it.
+
+Measured 2026-09-03, debug, 600 frames, one held bubble across 24 shipped systems, against a player-bubble baseline of **0.067 ms** (8 ships, 20 entities):
+
+| regressed against | slope | fixed per bubble | r² |
+| --- | ---: | ---: | ---: |
+| **hulls** in the bubble | 0.00204 ms | 0.1015 ms | **0.010** |
+| **entities** in the bubble | 0.00199 ms | −0.0206 ms | **0.836** |
+
+**Hulls explain one percent of the variance; entities explain eighty-four.** System 8 carries **15 hulls in 25 entities for 0.155 ms**; system 11 carries **5 hulls in 136 entities for 0.350 ms**. A bubble costs what is *in* it, and a hull is one entity much as a rock is. The quadratic term is over **movers**, which the shipped galaxy tops out at 15 — 105 pairs — and it is not detectable in this range.
+
+**So a fleet does not cost what Phase 39's O(n²) note implies: six captains added to a system is about 0.012 ms.** The constraint on fleet size is a design question, not a frame-budget one — which is the opposite of what the arc assumed, and it is why stage E asks the question rather than answering it here.
+
+##### ⚑⚑ Two captains in one system already work, and the gap is exactly the sketch's three words
+
+`nearestPlayerEnemy` already carries the comment *"two captains in one system is reachable today (a miner and the patrol posted to cover them)"*, and it already skips `playerOwnedHull` so a guard does not open fire on the ship it was hired to protect. `m_fleet` has **no size cap anywhere**. So the *arrangement* the exit describes is reachable today, by giving two captains two independent orders and remembering which is which.
+
+**What is missing is a commander, a formation, and composition** — and by the user's second ruling, the first of those is a captain who re-issues the five orders that already ship.
+
+##### The user's rulings, both taken before a line was written
+
+1. **⚑⚑⚑⚑ THE FINE LAYER REOPENS FOR A SYSTEM THE PLAYER HAS POSTED A FLEET IN**, reversing Phase 39's ruling 12 exactly there and nowhere else. Taken over the cheaper option, which was to let composition change the die roll's *odds* (`heldBubbleRiskPerSecond` already halves per guard). The re-read then found the reversal is cheaper than the record made it sound — the per-frame half is already paid, and what reopens is a 2 Hz decision. ⚑⚑ **The die roll must then STOP for those systems.** `rollHeldBubbleHazard` and a real fight in one bubble is the *"a captain that is both things"* defect Phase 39's risk register names first, arrived at from the other side.
+2. **⚑⚑⚑ A FLEET IS A COMMANDER CAPTAIN WHO RE-ISSUES THE EXISTING FIVE ORDERS.** Subordinates keep their own `Captain` record, ship, cut and ledger; a fleet order resolves by handing each member one of `Haul`/`Mine`/`Patrol`/`Escort`. Taken over a sixth `OrderKind` (which would teach the three arms, every save site, the Crew tab and every predicate a fourth case) and over a `Fleet` object owning captains outright. **`m_captains` stays the flat list** every existing test, the Crew tab and `sol.captains()` read — which is what keeps Phase 39's five stages whole underneath this one.
+
+##### What already exists and must be reused rather than rebuilt
+
+- `Captain`, `CaptainOrder`, `CaptainLedger`, `m_captains`, `m_lostCaptains` — the person, saved at v45. A commander is one of these.
+- The three arms — `stationary()`, `itinerant()`, `escorting()`, plus `fighting()`. **`Escort` is the precedent for "a captain who follows another thing"**, and a subordinate is that with a captain on the other end instead of the player.
+- `nearestPlayerEnemy`, `playerOwnedHull`, `cruiseCaptainToward`, `tickPatrolBeat`, `tickStationaryCaptains` — combat and work decisions **already made in C++ and already taking a bubble as an argument**. Ruling 1's re-target pass is this machinery pointed the other way, which is why it is a stage and not a phase.
+- `steerFormation` and `followOffset` — the geometry, for the one scale at which it is visible.
+- `heldBubbleRiskPerSecond` — the guard-halves-the-risk rule, which stays as the **coarse fallback** for a fleet in a system past the bubble cap.
+- `what_a_bubble_costs_per_frame_past_the_cap` — the template for this phase's own instrument, on the hull axis rather than the system axis.
+
+##### Stages
+
+- **(A) The commander and the roster.** A captain can be put under another; membership is saved; the Crew tab draws a fleet as a group rather than as three unrelated rows. **Exit**: hire three, put two under a third, save, reload, and the Crew tab reads the same.
+- **(B) The order resolved by composition.** One fleet order — *work this field* — resolved into per-member orders by what the fleet is made of. **Exit**: give one order to a three-role fleet and watch three different orders appear on the Crew tab, none of them typed by the player.
+- **(C) ⚑⚑⚑⚑ The fine layer reopened. This is ruling 1 and it is the largest stage.** A C++ re-target pass for hostiles in a bubble the player has posted a fleet in; `rollHeldBubbleHazard` stands down for exactly those systems; the two player-frame decisions are excluded *by definition* rather than by accident. **Exit**: post a fleet, fly two systems away, and have the fight actually happen — with the die roll provably not also running.
+- **(D) The formation.** `steerFormation`'s first non-player consumer, at the one scale where it is visible. **Exit**: a fleet at a rock holds a shape you can see, and it is the shape the player chose.
+- **(E) The instrument and the cap.** The hull-axis measurement shipped as a test with assertions (Phase 39's ruling 20), and whatever fleet size falls out of it. **Exit**: the curve is in `game.unit` and the cap is a number with a reason.
+
+⚑ **A checkpoint after C**, because C is where the phase's cost and its correctness both land, and because A–C are already the exit's whole loop.
+
+**Phase exit**: a three-role mining fleet works a field unattended and defends itself when raided, with no per-ship orders given — the sketch's exit unchanged, because the ruling that makes it buildable has now been taken.
+
+##### Risk register
+
+1. **⚑⚑⚑⚑ The die roll and the fight both running is this phase's headline defect waiting to happen**, and it is the one Phase 39's register names first, reached from the other side. `rollHeldBubbleHazard` skips **slot 0 and only slot 0**. The moment stage C reopens a bubble that predicate is wrong, and **nothing in 440 tests asks it** — the same shape as the dead captain standing in the crew hall, which no test could see because the hall is composed.
+2. **⚑⚑⚑ The setup cost may make the exit a lab result.** `orderMine` needs docked + the captain's ship stored **at this dock** + a field in this system + a mining beam on that hull, and the playtest board already carries *"a mining captain can only be STARTED at one dock in eighty-one systems"*. A **three-role** fleet needs three hulls and three captains at that one dock. **Either this phase moves that, or the exit is reachable only in a drive.**
+3. **⚑⚑ Reopening decisions in k bubbles reopens what Phase 38 stage D closed.** The instance caps are tight and `claimVoice` steals the oldest (explosion 4, hit cues 6, weapon_fire 4 — 89 stolen in one measured fight), and `CombatEffects::kMaxParticles` is 2,000 for the whole game. Stage D fixed the *frame* question; a second fight that now re-targets spends the same voices, and the player's own explosion is what goes missing.
+4. **⚑ A commander is a captain, so every Phase 39 rule about captains is now asked of a thing that owns other things.** `killCaptain` on a commander, `m_lostCaptains`, dismissal, a commander with no ship, a commander under another commander. Each is an existing rule meeting a new shape.
+5. **The formation has no scale to be seen at unless stage D picks one.** Outside `kCaptainCruiseInside` the hulls are position-written by the pacing, and a formation there is a fiction nobody can photograph.
 
 ---
 
