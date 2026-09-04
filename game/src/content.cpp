@@ -2013,6 +2013,59 @@ bool cancelOrder(GameContent& content, double captain)
     return captain >= 1.0 && content.world().cancelOrder(static_cast<std::size_t>(captain) - 1);
 }
 
+// The fleet order (Phase 40 stage B). ⚑ ONE ARGUMENT, because the order is
+// said to a commander and everything else is read off the fleet's fits -
+// `sol.order_mine`'s shape one level up, and for its reason: there is nothing
+// to number and no list to print.
+bool orderFleet(GameContent& content, double captain)
+{
+    return captain >= 1.0 && content.world().orderFleetWork(static_cast<std::size_t>(captain) - 1);
+}
+
+bool standFleetDown(GameContent& content, double captain)
+{
+    return captain >= 1.0 && content.world().standFleetDown(static_cast<std::size_t>(captain) - 1);
+}
+
+// ⚑⚑⚑ THE RESOLUTION AS A QUESTION, WHICH IS THE STAGE'S EXIT MADE INSPECTABLE
+// BEFORE IT IS PRESSED. `sol.order_fleet` does a thing and `sol.captains()`
+// reports the result; between them there was no way to ask what the fits COME
+// TO without committing three captains to it. Asking is also the only way to
+// see the refusal in the console at all - a Lua binding hands back a bool, and
+// the reason lives in a string the world writes.
+std::string fleetPlan(GameContent& content, double captain)
+{
+    if (captain < 1.0) {
+        return "no such captain";
+    }
+    const auto index = static_cast<std::size_t>(captain) - 1;
+    std::vector<game::SpaceWorld::FleetAssignment> plan;
+    std::string reason;
+    if (!content.world().fleetWorkPlan(index, plan, &reason)) {
+        return "cannot: " + reason;
+    }
+    const std::vector<game::Captain>& roster = content.world().captains();
+    std::string lines = roster[index].name + "'s fleet would work this field";
+    for (const game::SpaceWorld::FleetAssignment& job : plan) {
+        lines += "\n   " + roster[job.captain].name + ": ";
+        switch (job.kind) {
+        case game::OrderKind::Mine:
+            lines += "mine (carries a beam)";
+            break;
+        case game::OrderKind::Patrol:
+            lines += "guard (the best guns of the rest)";
+            break;
+        case game::OrderKind::Haul:
+            lines += "haul to " + marketName(content.world(), job.market);
+            break;
+        case game::OrderKind::Escort:
+        case game::OrderKind::None:
+            break;
+        }
+    }
+    return lines;
+}
+
 // THE PROMOTION, ASKED OF THE SKY RATHER THAN OF THE RECORD. The failure mode
 // of a two-representation seam is the two disagreeing, so this reports what is
 // DRAWN - and `paced` says which clock moved it, which is the one fact that
@@ -4638,6 +4691,9 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&orderEscort>("sol", "order_escort", this);
     m_vm.registerFunction<&captainKill>("sol", "captain_kill", this);
     m_vm.registerFunction<&cancelOrder>("sol", "cancel_order", this);
+    m_vm.registerFunction<&orderFleet>("sol", "order_fleet", this);
+    m_vm.registerFunction<&standFleetDown>("sol", "stand_fleet_down", this);
+    m_vm.registerFunction<&fleetPlan>("sol", "fleet_plan", this);
     m_vm.registerFunction<&listCaptainShips>("sol", "captain_ships", this);
     m_vm.registerFunction<&insuranceQuote>("sol", "insurance_quote", this);
     m_vm.registerFunction<&addCredits>("sol", "add_credits", this);

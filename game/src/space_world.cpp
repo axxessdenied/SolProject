@@ -10100,6 +10100,270 @@ bool SpaceWorld::cancelOrder(std::size_t captainIndex, std::string* outError)
     return true;
 }
 
+bool SpaceWorld::fleetWorkPlan(std::size_t commanderIndex,
+                               std::vector<FleetAssignment>& out,
+                               std::string* outReason) const
+{
+    out.clear();
+    // ⚑ NO `refuse` IN THIS FUNCTION. It is asked once per frame by the Crew
+    // tab so the button can say why it is grey, and `refuse` writes a warning
+    // to the log every time it is called. The words are the same words; only
+    // the logging is left to the caller who has a player pressing something.
+    const auto no = [&](std::string reason) {
+        if (outReason != nullptr) {
+            *outReason = std::move(reason);
+        }
+        return false;
+    };
+
+    // `orderMine`'s doors, asked of the FLEET rather than of one captain, and
+    // in its order so the first thing the player is told is the first thing
+    // they can fix.
+    if (!isDocked()) {
+        return no("must be docked to give a fleet an order");
+    }
+    if (commanderIndex >= m_captains.size()) {
+        return no("no such captain");
+    }
+    const Captain& commander = m_captains[commanderIndex];
+    // ⚑⚑ THE ORDER IS GIVEN TO THE COMMANDER, AND A SUBORDINATE IS TOLD WHOSE
+    // DOOR TO KNOCK ON. This is ruling 2's shape enforced rather than assumed:
+    // a fleet is a commander and the people who answer to them, so there is
+    // exactly one person a fleet order can be said to.
+    // ⚑⚑ ONE NAME, AND THE BUDGET IS MEASURED RATHER THAN FELT. This string is
+    // drawn in the Crew tab's detail cell, which is 590 px - about 67 glyphs of
+    // the real font, measured off the screenshot this stage was flown with. A
+    // captain's name is at most 15 characters (`kGivenNames` tops out at 5 and
+    // `kFamilyNames` at 9), so a sentence with TWO of them in it runs 69 and
+    // clips - which is the sixth cell-width bug of this arc, caught before it
+    // shipped rather than after. The subordinate's own name is on the row
+    // directly above anyway; the commander's is the half the player needs.
+    if (const std::size_t boss = captainCommanderIndex(commanderIndex); boss < m_captains.size()) {
+        return no("give the order to '" + m_captains[boss].name + "', who commands this fleet");
+    }
+    std::vector<std::size_t> members;
+    captainSubordinates(commanderIndex, members);
+    if (members.empty()) {
+        return no("'" + commander.name + "' commands nobody - put somebody under them");
+    }
+    const std::uint32_t here = dockedMarket();
+    if (here == kNoIndex) {
+        return no("no market here to sell the ore at");
+    }
+    if (m_mining.fieldCount(m_currentSystem) == 0) {
+        return no("there is nothing to mine in this system");
+    }
+
+    // The fleet, commander first and then their people in roster order. The
+    // commander is a working captain like any other - ruling 2 again: there is
+    // no `Fleet` object for them to be the head of instead of a member of.
+    std::vector<std::size_t> crew;
+    crew.reserve(members.size() + 1);
+    crew.push_back(commanderIndex);
+    crew.insert(crew.end(), members.begin(), members.end());
+
+    // ⚑⚑⚑⚑ EVERY DOOR IS CHECKED BEFORE THE FIRST ORDER IS ISSUED, AND THAT IS
+    // THE WHOLE REASON THIS FUNCTION IS SEPARATE FROM `orderFleetWork`. Three
+    // single orders given in a row can fail on the third, and there is no
+    // sensible thing to do with the two that landed - a mining captain whose
+    // order is revoked has already left the pad. So the shared doors are asked
+    // of every member here, and by the time anything is issued the only way a
+    // single order can refuse is a bug.
+    for (const std::size_t i : crew) {
+        const Captain& member = m_captains[i];
+        if (member.ship >= m_fleet.size()) {
+            return no("'" + member.name + "' has no ship");
+        }
+        const OwnedShip& hull = m_fleet[member.ship];
+        if (hull.storedSystem != m_currentSystem || hull.storedStation != m_dockedStation) {
+            return no("'" + member.name + "' is not here - their ship is stored elsewhere");
+        }
+        if (member.order.kind != OrderKind::None) {
+            return no("'" + member.name + "' already has orders - stand the fleet down");
+        }
+    }
+
+    // ⚑⚑⚑ ONE: A BEAM MEANS THE ROCK, AND IT IS THE ONLY ABSOLUTE IN THE THREE.
+    // A mining laser is bought at an outfitter and bolted on in place of a gun
+    // - `armMiningBeam`'s own finding is that every hull this yard sells
+    // arrives with its weapon mounts already full, so fitting a beam is always
+    // giving something up. Nobody does that by accident, and `orderMine`
+    // refuses a hull without one, so the fit IS the instruction.
+    out.reserve(crew.size());
+    std::size_t miners = 0;
+    for (const std::size_t i : crew) {
+        if (shipMiningPower(m_fleet[m_captains[i].ship]) > 0.0f) {
+            out.push_back({.captain = i, .kind = OrderKind::Mine, .market = kNoIndex});
+            ++miners;
+        }
+    }
+    if (miners == 0) {
+        return no("nobody in this fleet carries a mining beam");
+    }
+
+    // ⚑⚑⚑⚑ TWO: ONE GUARD, AND THE REASON IS A NUMBER THIS FILE ALREADY HOLDS.
+    // `heldBubbleRiskPerSecond` halves the loss rate once PER GUARD posted in
+    // the system - geometric - so the second patrol buys half of an already
+    // halved number while a second hold buys a whole extra load moved. The
+    // fleet occupies one system and a guard covers all of it, which is what
+    // makes cover a shared good and cargo a per-hull one. So the best gun among
+    // whoever is not cutting rock takes the beat and everybody after that
+    // hauls.
+    //
+    // ⚑⚑ AND IT IS THE BEST GUN RATHER THAN "A HULL WITH GUNS", because stage
+    // D established that the boolean cannot discriminate: `sol.mining_laser`
+    // has `damage = 3.0`, and *"every weapon this game ships can hurt
+    // something"*. A number can rank; a predicate every hull satisfies cannot.
+    std::size_t guard = m_captains.size();
+    float bestGuns = 0.0f;
+    for (const std::size_t i : crew) {
+        if (shipMiningPower(m_fleet[m_captains[i].ship]) > 0.0f) {
+            continue;
+        }
+        const float guns = shipGunPower(m_fleet[m_captains[i].ship]);
+        // `>` and not `>=`, so a tie goes to the earlier row - the roster's own
+        // order, which is the order the player hired them in.
+        if (guns > bestGuns) {
+            bestGuns = guns;
+            guard = i;
+        }
+    }
+    // Zero is reachable only through an empty weapon mount, and it is exactly
+    // what `orderPatrol` refuses - so a fleet of unarmed hulls posts no guard
+    // rather than posting one that would be shot down without returning fire.
+    if (guard < m_captains.size() && bestGuns > 0.0f) {
+        out.push_back({.captain = guard, .kind = OrderKind::Patrol, .market = kNoIndex});
+    } else {
+        guard = m_captains.size();
+    }
+
+    // ⚑⚑⚑ THREE: EVERYBODY ELSE MOVES THE ORE, AND PHASE 39's MEASUREMENT IS
+    // WHY THE ROLE EXISTS AT ALL. A mining captain sells its whole hold into
+    // the ONE market its order names and so fills its own warehouse: session
+    // 93b measured ferrous ore at a working dock going 450 -> 1,200 units and
+    // 17.25 -> 7.00 cr in about thirty minutes, after which `quoteSell` returns
+    // zero and the captain stands at the counter earning nothing. A hauler
+    // running out of that dock is what drains it - and it needs no instruction
+    // to carry the ore, because after a miner has crashed the local price the
+    // ore is the cheapest thing on the counter and `captainThink` ranks by
+    // return on capital.
+    std::vector<std::size_t> haulers;
+    for (const std::size_t i : crew) {
+        if (i == guard || shipMiningPower(m_fleet[m_captains[i].ship]) > 0.0f) {
+            continue;
+        }
+        haulers.push_back(i);
+    }
+    if (!haulers.empty()) {
+        // ⚑⚑ THE NEAREST MARKET THE PLAYER REMEMBERS, WHICH IS `haulDestinations`
+        // ALREADY SORTED AND NOT A SECOND NOTION OF "WHERE IS WORTH GOING". The
+        // fleet's problem is VOLUME rather than margin - a saturated counter -
+        // and the shortest leg is the one that makes the most round trips an
+        // hour. It is also the only choice that survives a cold galaxy:
+        // `generateUniverse` leaves markets flat, so at tick zero every
+        // destination scores the same profit (none) and a ranking by margin
+        // would be picking at random while looking deliberate.
+        std::vector<HaulDestination> places;
+        haulDestinations(places);
+        if (places.empty()) {
+            return no("'" + m_captains[haulers.front()].name + "' has nowhere to haul to - buy market intel");
+        }
+        for (const std::size_t i : haulers) {
+            out.push_back({.captain = i, .kind = OrderKind::Haul, .market = places.front().market});
+        }
+    }
+    return true;
+}
+
+bool SpaceWorld::orderFleetWork(std::size_t commanderIndex, std::string* outError)
+{
+    std::vector<FleetAssignment> plan;
+    std::string reason;
+    if (!fleetWorkPlan(commanderIndex, plan, &reason)) {
+        return refuse(reason, outError);
+    }
+    std::uint32_t mining = 0;
+    std::uint32_t guarding = 0;
+    std::uint32_t hauling = 0;
+    std::vector<std::size_t> issued;
+    issued.reserve(plan.size());
+    for (const FleetAssignment& job : plan) {
+        bool given = false;
+        switch (job.kind) {
+        case OrderKind::Mine:
+            given = orderMine(job.captain);
+            mining += given ? 1u : 0u;
+            break;
+        case OrderKind::Patrol:
+            given = orderPatrol(job.captain);
+            guarding += given ? 1u : 0u;
+            break;
+        case OrderKind::Haul:
+            given = orderHaul(job.captain, job.market);
+            hauling += given ? 1u : 0u;
+            break;
+        case OrderKind::Escort:
+        case OrderKind::None:
+            break;
+        }
+        if (!given) {
+            // ⚑⚑ UNREACHABLE, AND HANDLED ANYWAY - which is `orderHaul`'s own
+            // treatment of its in-transit clause. `fleetWorkPlan` asks every
+            // door each of these three refuses on, so a refusal here means the
+            // plan and the order have drifted apart, and the honest thing to do
+            // with half a fleet at work is to send it home rather than leave it
+            // there. It is said out loud because a silent rollback of an order
+            // the player pressed is worse than the drift that caused it.
+            SOL_LOG_WARN("fleet order refused mid-issue for '%s' - standing the fleet back down",
+                         m_captains[job.captain].name.c_str());
+            for (const std::size_t back : issued) {
+                (void)cancelOrder(back);
+            }
+            return refuse("that order could not be given to the whole fleet", outError);
+        }
+        issued.push_back(job.captain);
+    }
+    SOL_LOG_INFO("%s's fleet works %s - %u mining, %u guarding, %u hauling",
+                 m_captains[commanderIndex].name.c_str(),
+                 m_galaxy.systems[m_currentSystem].name.c_str(),
+                 mining,
+                 guarding,
+                 hauling);
+    return true;
+}
+
+bool SpaceWorld::standFleetDown(std::size_t commanderIndex, std::string* outError)
+{
+    if (commanderIndex >= m_captains.size()) {
+        return refuse("no such captain", outError);
+    }
+    // Said to the commander, exactly as the order was - and a subordinate is
+    // sent to the same door, so the two verbs disagree about nothing.
+    if (const std::size_t boss = captainCommanderIndex(commanderIndex); boss < m_captains.size()) {
+        return refuse("say it to '" + m_captains[boss].name + "', who commands this fleet", outError);
+    }
+    std::vector<std::size_t> members;
+    captainSubordinates(commanderIndex, members);
+    if (members.empty()) {
+        return refuse("'" + m_captains[commanderIndex].name + "' commands nobody", outError);
+    }
+    members.insert(members.begin(), commanderIndex);
+    // ⚑ NOT DOCKED-GATED, because `cancelOrder` is not: calling people off
+    // their work is a message, and the one thing a fleet is FOR is being
+    // somewhere the player is not.
+    std::uint32_t stood = 0;
+    for (const std::size_t i : members) {
+        if (m_captains[i].order.kind != OrderKind::None && cancelOrder(i)) {
+            ++stood;
+        }
+    }
+    if (stood == 0) {
+        return refuse("nobody in '" + m_captains[commanderIndex].name + "'s fleet has orders", outError);
+    }
+    SOL_LOG_INFO("%s's fleet stands down - %u captain(s)", m_captains[commanderIndex].name.c_str(), stood);
+    return true;
+}
+
 sim::TraderRoute SpaceWorld::captainRoute(std::size_t captainIndex) const
 {
     if (captainIndex >= m_captains.size()) {

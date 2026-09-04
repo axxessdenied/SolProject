@@ -852,6 +852,20 @@ struct StationAction
         // are the same act said from the two ends. One verb, one meaning: take
         // THIS captain out of whatever fleet they are in.
         LeaveFleet, // index = the employed captain to release
+        // ⚑⚑⚑⚑ THE FLEET ORDER (Phase 40 stage B), AND IT CARRIES NOTHING FOR
+        // `OrderMine`'s REASON RAISED ONE LEVEL. "Work this field" names no
+        // place - the field is this system's and the counter is the dock the
+        // player is standing on - and it names no SHIP either, because which
+        // captain does what is resolved from the fleet's fits rather than
+        // picked off a list. The selection is the commander and that is the
+        // whole of the payload.
+        OrderFleet,
+        // The same act said to the group: `CancelOrder` for everybody in it.
+        // Separate from `CancelOrder` rather than a flag on it, because the
+        // two differ in WHO they are about - one captain against a fleet - and
+        // a screen that had to say which through a boolean would be a screen
+        // with two meanings for one button.
+        StandFleetDown,
     };
     Kind kind = Kind::None;
     const char* id = "";    // def id (component/weapon/ship/crew actions)
@@ -932,6 +946,21 @@ struct StationPanel
     const char* captainPatrolNote = "";
     bool captainCanEscort = false;
     const char* captainEscortNote = ""; // why not, or what the beam cuts at
+    // ⚑⚑⚑⚑ THE FLEET ORDER (Phase 40 stage B), ON THE MINING ROW'S PATTERN AND
+    // FOR ITS REASON: a live flag and a note that says why when it is not. The
+    // note is the difference that matters here - every other order on this tab
+    // refuses on a fact about ONE hull, and this one refuses on a fact about
+    // somebody else's, so "cancel their orders first" with no name in it would
+    // send the player round four captains looking for the one it meant.
+    //
+    // ⚑⚑ AND THE NOTE ALSO CARRIES THE RESOLUTION WHEN THE ORDER *CAN* BE
+    // GIVEN, which is the stage's exit made legible before it is pressed:
+    // "mining 1, guarding 1, hauling 1" is what the fleet's fits come to. It is
+    // bounded by the roster size, which is why it is safe in a cell - the four
+    // labels this arc has clipped were all strings the CONTENT sized.
+    bool captainCanOrderFleet = false;
+    bool captainCanStandFleetDown = false;
+    const char* captainFleetNote = "";
     // The sell floor (stage E). ⚑ `captainOnHaul` is what decides whether the
     // strip is drawn at all, and it is a separate field rather than being
     // inferred from `captainRoute` being non-empty: three of the five order

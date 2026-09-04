@@ -2765,6 +2765,61 @@ public:
     bool orderEscort(std::size_t captainIndex, std::string* outError = nullptr);
     bool cancelOrder(std::size_t captainIndex, std::string* outError = nullptr);
 
+    // --- The fleet order (Phase 40 stage B) ---------------------------------
+    //
+    // ⚑⚑⚑⚑ ONE ORDER GIVEN TO A COMMANDER, RESOLVED INTO THE FIVE THAT ALREADY
+    // SHIP - which is the user's ruling 2 built rather than restated. There is
+    // no sixth `OrderKind` and nothing new is saved: what a fleet order
+    // PRODUCES is an ordinary `Mine`, `Patrol` or `Haul` on each member's own
+    // `Captain` record, so every predicate, every tick and every save site
+    // Phase 39 wrote goes on working underneath without learning a new case.
+    //
+    // ⚑⚑⚑ AND THAT IS ALSO WHY THERE IS NO "FLEET ORDER" TO CANCEL. The order
+    // is a way of GIVING orders, not a thing that continues to exist - once it
+    // resolves there are three ordinary orders and each one stands, cancels and
+    // saves on its own. `standFleetDown` is the same act said to the group, and
+    // it is `cancelOrder` in a loop rather than a second representation of the
+    // relationship - which is `Captain::commander`'s own rule one verb along.
+    //
+    // ⚑⚑ THE COMPOSITION IS THE FIT, AND THE FIT IS A PURCHASE THE PLAYER MADE.
+    // Stage D's own finding is what rules out the obvious reading: *"EVERY
+    // weapon this game ships can hurt something"*, so "carries guns" is not a
+    // role and cannot be made into one. What discriminates is a MINING BEAM -
+    // bought at an outfitter, refused by `orderMine` when it is missing, and
+    // good for exactly one thing.
+    struct FleetAssignment
+    {
+        std::size_t captain = 0;
+        OrderKind kind = OrderKind::None;
+        // The far end of a hauler's run; `kNoIndex` on the other two, which
+        // name places the order already knows (this system, this dock).
+        std::uint32_t market = kNoIndex;
+    };
+
+    // What "work this field" WOULD do, without doing it. False with a reason in
+    // `outReason` when the order could not be given at all.
+    //
+    // ⚑⚑⚑ CONST, AND IT DOES NOT GO THROUGH `refuse` - which is not tidiness.
+    // The Crew tab asks this every frame to label its own button, and `refuse`
+    // logs a warning on every call; a screen that explained itself would fill
+    // the log at sixty lines a second. So the reason comes back as a string and
+    // `orderFleetWork` is the one caller that turns it into a refusal. One
+    // rule, two readers - this file's standing bargain, with the logging left
+    // on the side that has a player pressing something.
+    [[nodiscard]] bool fleetWorkPlan(std::size_t commanderIndex,
+                                     std::vector<FleetAssignment>& out,
+                                     std::string* outReason = nullptr) const;
+
+    // Give it. All or nothing: every member is checked against the doors its
+    // own order would refuse on BEFORE the first order is issued, because a
+    // fleet order that half-lands leaves the player with two captains working,
+    // one idle, and nothing on any screen saying which half failed.
+    bool orderFleetWork(std::size_t commanderIndex, std::string* outError = nullptr);
+    // Stand the whole fleet down - `cancelOrder` for every member who has an
+    // order, so each of them gets the courtesy they already had: a laden hauler
+    // finishes its leg and a miner brings the load in.
+    bool standFleetDown(std::size_t commanderIndex, std::string* outError = nullptr);
+
     // ⚑⚑⚑⚑ WHERE A CAPTAIN IS, THROUGH THE SAME DECOMPOSITION THE COARSE FLEET
     // USES (`sim::routeOf`). `TraderLeg::None` means parked; a `system` of
     // `sim::kNoSystem` on `Jump` means between gates and is the answer rather

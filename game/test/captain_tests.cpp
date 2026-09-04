@@ -331,6 +331,123 @@ template <typename Predicate>
     return false;
 }
 
+// --- The fleet order (Phase 40 stage B) --------------------------------------
+//
+// ⚑⚑⚑⚑ THE CLAIM THESE TESTS EXIST FOR IS THAT THE PLAYER TYPED ONE THING AND
+// THREE DIFFERENT ORDERS CAME OUT OF IT. That is easy to satisfy by accident
+// and hard to satisfy honestly: a bug that gave everybody the same order passes
+// "three captains have orders" perfectly, and a bug that resolved by ROSTER
+// POSITION rather than by fit passes "three different orders" just as well. So
+// what is asserted is which order landed on WHICH HULL, with the fits arranged
+// so that position and fit disagree - the commander is the one who hauls.
+
+// How many mounts on this hull can take a weapon at all. ⚑ The fits below have
+// to be arranged so the guard is picked by a NUMBER rather than by a boolean,
+// and a hull with one weapon mount cannot hold two guns - so the recipe adapts
+// to the yard rather than the test asserting a hull the galaxy may not sell.
+[[nodiscard]] int weaponMountCount(Fixture& fixture, std::size_t slot)
+{
+    const sol::assets::ShipDef def = fixture.world().resolvedShipDef(fixture.world().fleet()[slot]);
+    int mounts = 0;
+    for (const sol::assets::ShipMount& mount : def.mounts) {
+        mounts += sol::assets::mountTakesWeapon(mount.kind) ? 1 : 0;
+    }
+    return mounts;
+}
+
+// Strips every weapon off `slot` and bolts `count` copies of `weaponId` back
+// on. ⚑ THROUGH THE SEAT, because `buyFitting` refits the ACTIVE ship - which
+// is the same walk `armMiningBeam` documents and the same one a player makes.
+[[nodiscard]] bool refitWeapons(Fixture& fixture, std::size_t slot, const char* weaponId, int count)
+{
+    SpaceWorld& w = fixture.world();
+    if (!w.switchShip(slot)) {
+        return false;
+    }
+    const sol::assets::ShipDef def = w.resolvedShipDef(w.activeShip());
+    int placed = 0;
+    for (const sol::assets::ShipMount& mount : def.mounts) {
+        if (!sol::assets::mountTakesWeapon(mount.kind)) {
+            continue;
+        }
+        (void)w.sellFitting(mount.id.c_str()); // false on an already-empty mount
+        if (placed < count && w.buyFitting(weaponId, mount.id.c_str())) {
+            ++placed;
+        }
+    }
+    return w.switchShip(0) && placed == count;
+}
+
+// The id of the first weapon that cuts rock, and of the first that only shoots.
+[[nodiscard]] const char* firstWeapon(Fixture& fixture, bool mining)
+{
+    for (const sol::assets::WeaponDef& weapon : fixture.defs.weapons()) {
+        if (mining ? weapon.miningPower > 0.0f : (weapon.damage > 0.0f && weapon.miningPower <= 0.0f)) {
+            return weapon.id.c_str();
+        }
+    }
+    return nullptr;
+}
+
+// A three-role fleet standing on one dock, commanded by the captain whose hull
+// is the WORST at everything - so a resolution that read the roster instead of
+// the fits would put the commander at the rock. Returns the commander's index.
+struct ThreeRoles
+{
+    std::size_t commander = kNone; // no beam, fewest guns  -> should haul
+    std::size_t miner = kNone;     // carries a beam        -> should mine
+    std::size_t guard = kNone;     // the best guns of the rest -> should patrol
+};
+
+[[nodiscard]] ThreeRoles buildThreeRoleFleet(Fixture& fixture)
+{
+    SpaceWorld& w = fixture.world();
+    const char* beam = firstWeapon(fixture, /*mining=*/true);
+    const char* gun = firstWeapon(fixture, /*mining=*/false);
+    if (beam == nullptr || gun == nullptr) {
+        return {};
+    }
+    const std::size_t hullA = fixture.buyAnyShip();
+    const std::size_t hullB = fixture.buyAnyShip();
+    const std::size_t hullC = fixture.buyAnyShip();
+    if (hullA == 0 || hullB == 0 || hullC == 0) {
+        return {};
+    }
+    // Two guns against one where the hull has the mounts for it, one against
+    // none where it does not. Either way the guard is picked off a comparison
+    // rather than off "carries a gun" - which stage D proved cannot separate
+    // anything, because every weapon this game ships can hurt something.
+    const int mounts = weaponMountCount(fixture, hullB);
+    if (!refitWeapons(fixture, hullA, beam, 1) || !refitWeapons(fixture, hullB, gun, mounts >= 2 ? 2 : 1) ||
+        !refitWeapons(fixture, hullC, gun, mounts >= 2 ? 1 : 0)) {
+        return {};
+    }
+    std::printf("  hulls: beam %.1f / guns %.1f | guns %.1f | guns %.1f (%d weapon mount(s))\n",
+                static_cast<double>(w.shipMiningPower(w.fleet()[hullA])),
+                static_cast<double>(w.shipGunPower(w.fleet()[hullA])),
+                static_cast<double>(w.shipGunPower(w.fleet()[hullB])),
+                static_cast<double>(w.shipGunPower(w.fleet()[hullC])),
+                mounts);
+    if (!(w.shipGunPower(w.fleet()[hullB]) > w.shipGunPower(w.fleet()[hullC]))) {
+        return {}; // the ranking would be a coin flip: the recipe failed
+    }
+
+    ThreeRoles roles;
+    // The COMMANDER is hired first, so they sit at roster index 0 and get the
+    // hull that is worst at everything.
+    roles.commander = hireAndGive(fixture, hullC);
+    roles.miner = hireAndGive(fixture, hullA);
+    roles.guard = hireAndGive(fixture, hullB);
+    if (roles.commander == kNone || roles.miner == kNone || roles.guard == kNone) {
+        return {};
+    }
+    if (!w.setCaptainCommander(roles.miner, roles.commander) ||
+        !w.setCaptainCommander(roles.guard, roles.commander)) {
+        return {};
+    }
+    return roles;
+}
+
 } // namespace
 
 // ⚑ The gate, and its anti-vacuity half in the same test: a hall offers people
@@ -3389,4 +3506,349 @@ SOL_TEST(the_fleet_section_offers_the_verb_that_matches_who_is_selected)
     SOL_REQUIRE(panel.fleetOptions.size() == 1);
     SOL_CHECK(panel.fleetOptions[0].index == 0);
     std::printf("  Under / Leave / Free, each with the row the action needs\n");
+}
+
+// ⚑⚑⚑⚑ THE STAGE EXIT: ONE ORDER TO A THREE-ROLE FLEET BECOMES THREE DIFFERENT
+// ORDERS, NONE OF THEM TYPED BY THE PLAYER. The anti-vacuity halves are in the
+// same test because each is satisfiable alone - "everybody got an order" is
+// satisfied by three identical ones, "three kinds appeared" is satisfied by a
+// resolution that shuffled them onto the wrong hulls, and both are satisfied by
+// a screen that reports what it wishes had happened.
+SOL_TEST(one_order_to_a_three_role_fleet_becomes_three_different_orders)
+{
+    Fixture fixture;
+    const Dock dock = findMiningDock(fixture);
+    SOL_REQUIRE(dock.system != kNone);
+    SOL_REQUIRE(fixture.walkIn(dock));
+    SpaceWorld& w = fixture.world();
+
+    const ThreeRoles roles = buildThreeRoleFleet(fixture);
+    SOL_REQUIRE(roles.commander != kNone);
+    // A hauler needs somewhere to go, and where a fleet can reach is what the
+    // player has bought - the same fence `haulDestinations` puts on a single
+    // captain, met here rather than special-cased away.
+    w.addCredits(1'000'000.0);
+    SOL_REQUIRE(w.buyMarketIntel());
+
+    std::vector<SpaceWorld::FleetAssignment> plan;
+    std::string why;
+    SOL_REQUIRE(w.fleetWorkPlan(roles.commander, plan, &why));
+    SOL_REQUIRE(plan.size() == 3);
+    for (const SpaceWorld::FleetAssignment& job : plan) {
+        std::printf("  plan: %s -> %d\n", w.captains()[job.captain].name.c_str(), static_cast<int>(job.kind));
+    }
+
+    // ⚑ ASKED BEFORE IT IS GIVEN AND NOT AFTER. The plan is what the Crew tab
+    // labels its own button from, so a plan that only became true once the
+    // orders existed would be a button that could never say what it does.
+    SOL_REQUIRE(w.orderFleetWork(roles.commander));
+
+    const game::Captain& commander = w.captains()[roles.commander];
+    const game::Captain& miner = w.captains()[roles.miner];
+    const game::Captain& guard = w.captains()[roles.guard];
+    std::printf(
+        "  %s hauls, %s mines, %s guards\n", commander.name.c_str(), miner.name.c_str(), guard.name.c_str());
+    // WHICH ORDER LANDED ON WHICH HULL. The commander is first in the roster
+    // and last in usefulness, so a resolution by position would have put them
+    // at the rock.
+    SOL_CHECK(miner.order.kind == game::OrderKind::Mine);
+    SOL_CHECK(guard.order.kind == game::OrderKind::Patrol);
+    SOL_CHECK(commander.order.kind == game::OrderKind::Haul);
+    // Three DIFFERENT ones, said as its own assertion because that is the
+    // sentence the exit is written in.
+    SOL_CHECK(miner.order.kind != guard.order.kind && guard.order.kind != commander.order.kind &&
+              miner.order.kind != commander.order.kind);
+    // And the haul has a real far end rather than a hole: `orderHaul` refuses
+    // the dock you are standing on, so this is somewhere else in the galaxy.
+    SOL_CHECK(commander.order.marketB < w.economy().markets().size());
+    SOL_CHECK(commander.order.marketB != commander.order.marketA);
+
+    // The tab reads it back, which is the half of the exit a player performs.
+    std::deque<std::string> text;
+    sol::ui::StationPanel panel;
+    std::vector<sol::ui::MountRow> mounts;
+    std::vector<sol::ui::OutfitRow> components;
+    std::vector<sol::ui::OutfitRow> blackMarket;
+    std::vector<sol::ui::OutfitRow> blackMarketShips;
+    std::vector<sol::ui::OutfitRow> weapons;
+    std::vector<sol::ui::OutfitRow> crewCatalog;
+    std::vector<sol::ui::OutfitRow> crewAboard;
+    std::vector<sol::ui::OutfitRow> ships;
+    std::vector<sol::ui::FleetRow> fleetShips;
+    std::vector<sol::ui::CaptainRow> captainRows;
+    std::vector<sol::ui::CaptainRow> captainHires;
+    std::vector<sol::ui::CaptainRow> haulRows;
+    std::vector<sol::ui::CaptainRow> fleetOptions;
+    std::vector<sol::ui::FactionRow> factions;
+    const auto fill = [&](std::size_t selected) {
+        panel.selectedCaptain = static_cast<int>(selected);
+        game::fillStationOutfitting(w,
+                                    fixture.defs,
+                                    text,
+                                    panel,
+                                    mounts,
+                                    components,
+                                    blackMarket,
+                                    blackMarketShips,
+                                    weapons,
+                                    crewCatalog,
+                                    crewAboard,
+                                    ships,
+                                    fleetShips,
+                                    captainRows,
+                                    captainHires,
+                                    haulRows,
+                                    fleetOptions,
+                                    factions);
+    };
+    fill(roles.miner);
+    const std::string minerStatus = panel.captainStatus;
+    fill(roles.guard);
+    const std::string guardStatus = panel.captainStatus;
+    fill(roles.commander);
+    const std::string haulerStatus = panel.captainStatus;
+    std::printf(
+        "  tab: \"%s\" | \"%s\" | \"%s\"\n", minerStatus.c_str(), guardStatus.c_str(), haulerStatus.c_str());
+    SOL_CHECK(minerStatus != guardStatus && guardStatus != haulerStatus && minerStatus != haulerStatus);
+    SOL_CHECK(minerStatus.find("rock") != std::string::npos);
+    SOL_CHECK(guardStatus.find("beat") != std::string::npos);
+    // The commander is selected, so the fleet row is theirs: the order is given
+    // and the way back is the one the section offers.
+    SOL_CHECK(!panel.captainCanOrderFleet);
+    SOL_CHECK(panel.captainCanStandFleetDown);
+    std::printf("  fleet row: \"%s\"\n", panel.captainFleetNote);
+}
+
+// The note under the button is the resolution said in words BEFORE it happens,
+// which is the only way a player can tell what one press will do to three
+// people. ⚑ It is also the assertion that catches a plan built from the wrong
+// list: a fleet of three that reported "mining 3" would be a fleet whose fits
+// were never read.
+SOL_TEST(the_crew_tab_says_what_the_fleet_order_will_do_before_it_is_pressed)
+{
+    Fixture fixture;
+    const Dock dock = findMiningDock(fixture);
+    SOL_REQUIRE(dock.system != kNone);
+    SOL_REQUIRE(fixture.walkIn(dock));
+    SpaceWorld& w = fixture.world();
+
+    const ThreeRoles roles = buildThreeRoleFleet(fixture);
+    SOL_REQUIRE(roles.commander != kNone);
+    w.addCredits(1'000'000.0);
+    SOL_REQUIRE(w.buyMarketIntel());
+
+    std::deque<std::string> text;
+    sol::ui::StationPanel panel;
+    std::vector<sol::ui::MountRow> mounts;
+    std::vector<sol::ui::OutfitRow> components;
+    std::vector<sol::ui::OutfitRow> blackMarket;
+    std::vector<sol::ui::OutfitRow> blackMarketShips;
+    std::vector<sol::ui::OutfitRow> weapons;
+    std::vector<sol::ui::OutfitRow> crewCatalog;
+    std::vector<sol::ui::OutfitRow> crewAboard;
+    std::vector<sol::ui::OutfitRow> ships;
+    std::vector<sol::ui::FleetRow> fleetShips;
+    std::vector<sol::ui::CaptainRow> captainRows;
+    std::vector<sol::ui::CaptainRow> captainHires;
+    std::vector<sol::ui::CaptainRow> haulRows;
+    std::vector<sol::ui::CaptainRow> fleetOptions;
+    std::vector<sol::ui::FactionRow> factions;
+    const auto fill = [&](std::size_t selected) {
+        panel.selectedCaptain = static_cast<int>(selected);
+        game::fillStationOutfitting(w,
+                                    fixture.defs,
+                                    text,
+                                    panel,
+                                    mounts,
+                                    components,
+                                    blackMarket,
+                                    blackMarketShips,
+                                    weapons,
+                                    crewCatalog,
+                                    crewAboard,
+                                    ships,
+                                    fleetShips,
+                                    captainRows,
+                                    captainHires,
+                                    haulRows,
+                                    fleetOptions,
+                                    factions);
+    };
+
+    fill(roles.commander);
+    std::printf(
+        "  commander note: \"%s\" (live %d)\n", panel.captainFleetNote, panel.captainCanOrderFleet ? 1 : 0);
+    SOL_CHECK(panel.captainCanOrderFleet);
+    SOL_CHECK(!panel.captainCanStandFleetDown);
+    SOL_CHECK(std::string(panel.captainFleetNote) == "mining 1, guarding 1, hauling 1");
+
+    // ⚑⚑ AND A SUBORDINATE IS SENT TO THE COMMANDER BY NAME RATHER THAN GIVEN A
+    // DEAD BUTTON. Every other refusal on this tab is a fact about the selected
+    // captain's own hull; this one is a fact about who they answer to, and
+    // "cancel their orders first" with nobody named in it would send the player
+    // round the roster looking for the captain it meant.
+    fill(roles.miner);
+    const std::string subordinate = panel.captainFleetNote;
+    std::printf("  subordinate note: \"%s\"\n", subordinate.c_str());
+    SOL_CHECK(!panel.captainCanOrderFleet);
+    SOL_CHECK(subordinate.find(w.captains()[roles.commander].name) != std::string::npos);
+
+    // ⚑⚑⚑⚑ THE CELL WIDTH, AS THE ONE THING A TEST CAN ACTUALLY HOLD ABOUT IT.
+    // Five labels have run out of their cell in this arc and the instrument for
+    // every one of them was a screenshot, because no `ui.unit` test can measure
+    // a font this build does not ship. What CAN be asserted is the property the
+    // measurement produced: the detail cell is 590 px, about 67 glyphs, a
+    // captain's name is at most 15 (`kGivenNames` 5 + `kFamilyNames` 9 + a
+    // space), and a note that puts TWO names in one sentence is 69 in the worst
+    // case. So the rule is ONE NAME, and this counts them - which is a claim a
+    // later edit can break and a length check on these particular captains
+    // would not catch.
+    std::size_t named = 0;
+    for (const game::Captain& captain : w.captains()) {
+        named += subordinate.find(captain.name) != std::string::npos ? 1u : 0u;
+    }
+    std::printf("  the note names %zu captain(s), %zu glyph(s)\n", named, subordinate.size());
+    SOL_CHECK(named == 1);
+    SOL_CHECK(subordinate.size() + (15u - w.captains()[roles.commander].name.size()) <= 67u);
+}
+
+// ⚑⚑⚑⚑ ALL OR NOTHING, AND THE FAILURE THIS PREVENTS IS SPECIFIC: three single
+// orders given in a row can refuse on the third, and there is nothing sensible
+// to do with the two that landed - a mining captain whose order is revoked has
+// already left the pad, and the player is left with half a fleet at work and
+// no screen saying which half. So the doors are asked of everybody first.
+SOL_TEST(a_fleet_order_lands_whole_or_not_at_all)
+{
+    Fixture fixture;
+    const Dock dock = findMiningDock(fixture);
+    SOL_REQUIRE(dock.system != kNone);
+    SOL_REQUIRE(fixture.walkIn(dock));
+    SpaceWorld& w = fixture.world();
+
+    const ThreeRoles roles = buildThreeRoleFleet(fixture);
+    SOL_REQUIRE(roles.commander != kNone);
+    w.addCredits(1'000'000.0);
+    SOL_REQUIRE(w.buyMarketIntel());
+
+    // ⚑ THE GUARD HANDS THEIR HULL BACK, WHICH IS THE CHEAPEST WAY TO MAKE ONE
+    // MEMBER UNORDERABLE WITHOUT TOUCHING THE OTHER TWO. A hall holds three
+    // people and the fleet has all three of them, so a fourth captain is not
+    // something this dock can produce - and a shipless captain is the refusal
+    // `orderMine`, `orderPatrol` and `orderHaul` all share, which is exactly
+    // the one the fleet order has to ask BEFORE it issues anything.
+    SOL_REQUIRE(w.recallCaptain(roles.guard));
+    const std::size_t shipless = roles.guard;
+
+    std::vector<SpaceWorld::FleetAssignment> plan;
+    std::string why;
+    SOL_CHECK(!w.fleetWorkPlan(roles.commander, plan, &why));
+    std::printf("  refused: %s\n", why.c_str());
+    SOL_CHECK(why.find(w.captains()[shipless].name) != std::string::npos);
+    SOL_CHECK(!w.orderFleetWork(roles.commander));
+    // NOBODY MOVED. This is the assertion the stage is really about: a refusal
+    // that had already issued two orders would pass every check above it - and
+    // the miner is the FIRST job in the plan, so a loop that issued as it went
+    // would leave a hull out at a rock with the order that sent it refused.
+    for (const game::Captain& captain : w.captains()) {
+        SOL_CHECK(captain.order.kind == game::OrderKind::None);
+    }
+
+    // Take them out of the fleet and the same order goes through untouched.
+    // ⚑⚑ AND THE COMPOSITION ANSWERS DIFFERENTLY BECAUSE THE COMPOSITION
+    // CHANGED, WHICH IS THE POINT OF THE FEATURE SEEN FROM THE SIDE. The
+    // commander is the hull the recipe left with EMPTY weapon mounts, so with
+    // the guard gone there is nobody who can be posted to a beat - zero guns is
+    // exactly what `orderPatrol` refuses - and the fleet resolves to a miner
+    // and a hauler rather than to a miner and a guard who could not shoot.
+    SOL_REQUIRE(w.clearCaptainCommander(shipless));
+    SOL_REQUIRE(w.orderFleetWork(roles.commander));
+    SOL_CHECK(w.captains()[roles.miner].order.kind == game::OrderKind::Mine);
+    SOL_CHECK(w.shipGunPower(w.fleet()[w.captains()[roles.commander].ship]) <= 0.0f);
+    SOL_CHECK(w.captains()[roles.commander].order.kind == game::OrderKind::Haul);
+    SOL_CHECK(w.captains()[shipless].order.kind == game::OrderKind::None);
+}
+
+// A fleet with nothing that can cut rock is refused by the order's own subject
+// rather than by one of its members' - "work this field" with nobody who can.
+SOL_TEST(a_fleet_with_no_beam_in_it_is_refused_the_field)
+{
+    Fixture fixture;
+    const Dock dock = findMiningDock(fixture);
+    SOL_REQUIRE(dock.system != kNone);
+    SOL_REQUIRE(fixture.walkIn(dock));
+    SpaceWorld& w = fixture.world();
+
+    const char* gun = firstWeapon(fixture, /*mining=*/false);
+    SOL_REQUIRE(gun != nullptr);
+    const std::size_t hullA = fixture.buyAnyShip();
+    const std::size_t hullB = fixture.buyAnyShip();
+    SOL_REQUIRE(hullA != 0 && hullB != 0);
+    SOL_REQUIRE(refitWeapons(fixture, hullA, gun, 1));
+    SOL_REQUIRE(refitWeapons(fixture, hullB, gun, 1));
+    const std::size_t boss = hireAndGive(fixture, hullA);
+    const std::size_t mate = hireAndGive(fixture, hullB);
+    SOL_REQUIRE(boss != kNone && mate != kNone);
+    SOL_REQUIRE(w.setCaptainCommander(mate, boss));
+
+    std::vector<SpaceWorld::FleetAssignment> plan;
+    std::string why;
+    SOL_CHECK(!w.fleetWorkPlan(boss, plan, &why));
+    std::printf("  refused: %s\n", why.c_str());
+    SOL_CHECK(why.find("beam") != std::string::npos);
+    SOL_CHECK(plan.empty());
+
+    // ⚑ AND A CAPTAIN WHO COMMANDS NOBODY IS NOT A FLEET OF ONE. The order
+    // resolves across a composition, and a single captain has none - they have
+    // the three order buttons above this row and always did.
+    SOL_REQUIRE(w.clearCaptainCommander(mate));
+    SOL_CHECK(!w.fleetWorkPlan(boss, plan, &why));
+    std::printf("  alone: %s\n", why.c_str());
+    SOL_CHECK(why.find("commands nobody") != std::string::npos);
+}
+
+// ⚑⚑⚑ ONE PRESS PUT THREE CAPTAINS TO WORK, SO ONE PRESS HAS TO BRING THEM
+// BACK. Without this the way out of a fleet order is three separate Cancels
+// found by selecting three separate rows - an asymmetry the player pays for
+// every time, and the kind of thing that is only ever noticed by flying it.
+SOL_TEST(standing_a_fleet_down_ends_every_members_order)
+{
+    Fixture fixture;
+    const Dock dock = findMiningDock(fixture);
+    SOL_REQUIRE(dock.system != kNone);
+    SOL_REQUIRE(fixture.walkIn(dock));
+    SpaceWorld& w = fixture.world();
+
+    const ThreeRoles roles = buildThreeRoleFleet(fixture);
+    SOL_REQUIRE(roles.commander != kNone);
+    w.addCredits(1'000'000.0);
+    SOL_REQUIRE(w.buyMarketIntel());
+    SOL_REQUIRE(w.orderFleetWork(roles.commander));
+
+    SOL_REQUIRE(w.standFleetDown(roles.commander));
+    // ⚑ "STOOD DOWN" IS NOT "STOPPED", and that is each order's own courtesy
+    // rather than a compromise: a miner brings the load in and a patrol flies
+    // home to park, because `cancelOrder` is what this calls and those are its
+    // rules. What must be true of every one of them is that the order is over
+    // or on its way over.
+    for (const game::Captain& captain : w.captains()) {
+        SOL_CHECK(captain.order.kind == game::OrderKind::None || captain.order.stopping);
+    }
+    SOL_REQUIRE(runUntil(
+        w,
+        [&] {
+            for (const game::Captain& captain : w.captains()) {
+                if (captain.order.kind != game::OrderKind::None) {
+                    return false;
+                }
+            }
+            return true;
+        },
+        20000));
+    std::printf("  the whole fleet is idle again\n");
+
+    // Nothing to stand down is a refusal rather than a silent success, on this
+    // file's rule that a button which would do nothing says why.
+    SOL_CHECK(!w.standFleetDown(roles.commander));
+    // And it is said to the commander: a subordinate is told whose door it is.
+    SOL_CHECK(!w.standFleetDown(roles.miner));
 }

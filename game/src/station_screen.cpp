@@ -914,10 +914,14 @@ void buildCrewTab(UiContext& ui, StationPanel& panel, StationScreenState& state,
                            // was one nobody scrolled to, and Phase 40 stage A
                            // put a new one there.
                            //
-                           // ⚑ `listHeight(ui, 6)` rather than a sum, because a
+                           // ⚑ `listHeight(ui, 7)` rather than a sum, because a
                            // sum is what drifted: every row added here since
-                           // stage B has had to remember to add a term.
-                           listHeight(ui, 6) +
+                           // stage B has had to remember to add a term. ⚑⚑ AND
+                           // THE FIRST ROW ADDED AFTER THAT WAS WRITTEN IS THE
+                           // ONE ABOVE - Phase 40 stage B's fleet order - so
+                           // this is six going to SEVEN, which a sum would have
+                           // been one term short of again.
+                           listHeight(ui, 7) +
                            listHeight(ui, std::max<std::size_t>(panel.haulDestinations.size(), 1)) +
                            // The fleet section (Phase 40 stage A).
                            listHeight(ui, std::max<std::size_t>(panel.fleetOptions.size(), 1)) +
@@ -1088,6 +1092,35 @@ void buildCrewTab(UiContext& ui, StationPanel& panel, StationScreenState& state,
                     panel.captainEarned[0] != '\0' ? panel.captainEarned : "nothing yet - no ship",
                     theme.textDim);
 
+            // ⚑⚑⚑⚑ THE FLEET ORDER (Phase 40 stage B), AND IT SITS ABOVE THE
+            // THREE SINGLE ORDERS BECAUSE IT IS THE ONE THAT REPLACES THEM.
+            // A player who has formed a fleet reads down this section and the
+            // first thing offered is the sentence that saves them the other
+            // three; a player who has not gets a greyed button and a note that
+            // says so, in the same shape every order row on this tab uses.
+            //
+            // ⚑⚑ TWO BUTTONS AND BOTH ARE FIVE GLYPHS, WHICH IS `kButtonWidth`'s
+            // BUDGET AND NOT A PREFERENCE - about seven glyphs of the real font,
+            // measured off the screenshot that caught "Stand down" running under
+            // "Hand back" in Phase 39 stage E. "Work" gives the order and
+            // "Stand" ends it for everybody in the fleet at once, which is the
+            // symmetry the order needs: one press puts three captains to work,
+            // and without this the way back is three separate Cancels found by
+            // selecting three separate rows.
+            const Rect fleetRow = column.row(kRowHeight);
+            rowBackground(ui, fleetRow, 2);
+            const CatalogCells fleetCells = catalogCells(ui, fleetRow, false, true);
+            ui.pushId("fleetwork");
+            clipped(ui, fleetCells.name, "Put the fleet to work", theme.textPrimary);
+            clipped(ui, fleetCells.detail, panel.captainFleetNote, theme.textDim);
+            if (ui.button(inset(fleetCells.primary, 2.0f), "Work", panel.captainCanOrderFleet)) {
+                panel.action = {.kind = StationAction::Kind::OrderFleet, .index = panel.selectedCaptain};
+            }
+            if (ui.button(inset(fleetCells.secondary, 2.0f), "Stand", panel.captainCanStandFleetDown)) {
+                panel.action = {.kind = StationAction::Kind::StandFleetDown, .index = panel.selectedCaptain};
+            }
+            ui.popId();
+
             // ⚑⚑ "MINE HERE" IS A ROW AND NOT A DESTINATION, WHICH IS THE
             // ORDER'S SHAPE SHOWING THROUGH THE SCREEN. Every other way of
             // giving an order on this tab picks something out of a list,
@@ -1097,7 +1130,7 @@ void buildCrewTab(UiContext& ui, StationPanel& panel, StationScreenState& state,
             // button. The note beside it carries the refusal, because the two
             // this order can hit are both fixable and neither is guessable.
             const Rect mineRow = column.row(kRowHeight);
-            rowBackground(ui, mineRow, 2);
+            rowBackground(ui, mineRow, 3);
             const CatalogCells mineCells = catalogCells(ui, mineRow, false, false);
             ui.pushId("mine");
             clipped(ui, mineCells.name, "Work this system", theme.textPrimary);
@@ -1113,7 +1146,7 @@ void buildCrewTab(UiContext& ui, StationPanel& panel, StationScreenState& state,
             // ten-glyph label by having two buttons overlap; the labels here
             // were picked to that number rather than trimmed back to it later.
             const Rect patrolRow = column.row(kRowHeight);
-            rowBackground(ui, patrolRow, 3);
+            rowBackground(ui, patrolRow, 4);
             const CatalogCells patrolCells = catalogCells(ui, patrolRow, false, false);
             ui.pushId("patrol");
             clipped(ui, patrolCells.name, "Patrol this system", theme.textPrimary);
@@ -1124,7 +1157,7 @@ void buildCrewTab(UiContext& ui, StationPanel& panel, StationScreenState& state,
             ui.popId();
 
             const Rect escortRow = column.row(kRowHeight);
-            rowBackground(ui, escortRow, 4);
+            rowBackground(ui, escortRow, 5);
             const CatalogCells escortCells = catalogCells(ui, escortRow, false, false);
             ui.pushId("escort");
             clipped(ui, escortCells.name, "Fly as my escort", theme.textPrimary);
@@ -1149,7 +1182,7 @@ void buildCrewTab(UiContext& ui, StationPanel& panel, StationScreenState& state,
             // a button - measured off a screenshot after this row shipped a
             // drive with all four labels elided. See `kSellFloorLabels`.
             const Rect floorRow = column.row(kRowHeight);
-            rowBackground(ui, floorRow, 0);
+            rowBackground(ui, floorRow, 6);
             {
                 Row cursor(floorRow, theme.spacing);
                 ui.pushId("floor");

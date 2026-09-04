@@ -643,6 +643,60 @@ void fillStationOutfitting(const SpaceWorld& world,
             : ordered      ? "cancel their orders first"
                            : store(text, "flies your wing wherever you go, " + formatNumber(guns) + " dps");
 
+        // ⚑⚑⚑⚑ THE FLEET ORDER (Phase 40 stage B), AND IT IS THE ONE ROW ON
+        // THIS TAB WHOSE RULE THE SCREEN DOES NOT RE-DERIVE. Every note above
+        // is three or four fields of one captain read back here, which is
+        // cheap and checkable; this one turns on the fits of every hull in a
+        // fleet and on where the player has seen a price, and a second copy of
+        // that would be a second answer. `fleetWorkPlan` is the world's own
+        // resolution asked as a QUESTION - const, silent, and the same function
+        // `orderFleetWork` issues from - so the button and the order cannot
+        // drift, which is this file's standing bargain paid properly for once.
+        std::vector<SpaceWorld::FleetAssignment> plan;
+        std::string fleetWhy;
+        const bool canOrderFleet = world.fleetWorkPlan(index, plan, &fleetWhy);
+        // How much of this fleet is already at work, which is what decides
+        // whether the second button does anything. ⚑ Asked of the COMMANDER
+        // only: a subordinate is refused above by name and told whose door to
+        // knock on, and offering them a Stand here would be a second answer to
+        // the question the plan just answered.
+        std::vector<std::size_t> fleetCrew;
+        world.captainSubordinates(index, fleetCrew);
+        std::size_t fleetWorking = 0;
+        if (!fleetCrew.empty() && world.captainCommanderIndex(index) >= world.captains().size()) {
+            fleetCrew.push_back(index);
+            for (const std::size_t member : fleetCrew) {
+                fleetWorking += world.captains()[member].order.kind != game::OrderKind::None ? 1u : 0u;
+            }
+        }
+        panel.captainCanOrderFleet = canOrderFleet;
+        panel.captainCanStandFleetDown = fleetWorking > 0;
+        if (canOrderFleet) {
+            // What the fits come to, counted off the world's own plan rather
+            // than recomputed - so the sentence under the button is the order
+            // the button gives, to the ship.
+            std::size_t mining = 0;
+            std::size_t guarding = 0;
+            std::size_t hauling = 0;
+            for (const SpaceWorld::FleetAssignment& job : plan) {
+                mining += job.kind == game::OrderKind::Mine ? 1u : 0u;
+                guarding += job.kind == game::OrderKind::Patrol ? 1u : 0u;
+                hauling += job.kind == game::OrderKind::Haul ? 1u : 0u;
+            }
+            panel.captainFleetNote =
+                store(text,
+                      "mining " + std::to_string(mining) + ", guarding " + std::to_string(guarding) +
+                          ", hauling " + std::to_string(hauling));
+        } else if (fleetWorking > 0) {
+            // ⚑ THE ONE REFUSAL WORTH REPHRASING. The plan says "'Tarek'
+            // already has orders", which is true and reads as a fault; a fleet
+            // that is out working is the feature succeeding, and the player
+            // wants the number and the way back rather than a name.
+            panel.captainFleetNote = store(text, std::to_string(fleetWorking) + " of this fleet at work");
+        } else {
+            panel.captainFleetNote = store(text, fleetWhy);
+        }
+
         // ⚑ The destination list is offered only when an order would actually
         // be taken. `orderHaul` refuses a hull that is not on this dock and one
         // already on a run; both are read above rather than discovered by the
@@ -1284,6 +1338,19 @@ void executeStationAction(SpaceWorld& world, const ui::StationAction& action, in
         break;
     case Kind::CancelOrder:
         (void)world.cancelOrder(static_cast<std::size_t>(action.index));
+        break;
+    case Kind::OrderFleet:
+        // No row to resolve and no ship to name: the order is said to the
+        // commander and the fleet's fits decide the rest, which is
+        // `OrderMine`'s "the selection is the whole of it" one level up.
+        if (selectedCaptain >= 0) {
+            (void)world.orderFleetWork(static_cast<std::size_t>(selectedCaptain));
+        }
+        break;
+    case Kind::StandFleetDown:
+        if (selectedCaptain >= 0) {
+            (void)world.standFleetDown(static_cast<std::size_t>(selectedCaptain));
+        }
         break;
     }
 }
