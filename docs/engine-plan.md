@@ -3362,7 +3362,7 @@ Every clause is true of the nine `.wav` cues today, and the script has said so s
 
 **Suites: `platform.unit` 27 → 35, `game.unit` 41 → 59.** Windows dev 13/13 + dev-gpu 2/2, release 17/17 + release-gpu 5/5; clang-format clean by exit code.
 
-### The Depth Arc — Phases 28–41 📋 (planned 2026-08-28; **28 through 39 SHIPPED, 40 spec'd**, 41 is a sketch to be spec'd before starting)
+### The Depth Arc — Phases 28–41 📋 (planned 2026-08-28; **28 through 40 SHIPPED**, 41 is a sketch to be spec'd before starting)
 
 **From the user, 2026-08-28**, as eleven asks in one message: ship classes by size and role; parts, upgrades and subsystems; hardpoints on hulls with Forge authoring and in-game visuals; stations built from modules; a wider material tree with contraband; a black-market faction; transponders and running dark; authored systems and constellations for narrative control; ship commands with a right-click menu; multiple owned ships, captains and fleets; and station lore with characters who know things.
 
@@ -5042,7 +5042,7 @@ Five, one per ruling plus the two halves of the representation. **The user took 
 
 ---
 
-#### Phase 40 — Fleets and Formations 📋 (spec'd 2026-09-03)
+#### Phase 40 — Fleets and Formations ✅ (spec'd 2026-09-03, completed 2026-09-04)
 
 **Depends on**: 39 for the captain, 38 for the bubble. **v2.** ⚑ **Spec'd 2026-09-03 against a fresh re-read of the code — the thirty-fourth consecutive roadmap estimate the practice has moved**, and the sixth in a row moved *before* a line was written. ⚑⚑ **It moves one of this project's own rulings, and in the CHEAP direction**: Phase 39's ruling 12 refused the fine layer on a cost argument that names the wrong layer.
 
@@ -5135,6 +5135,96 @@ Measured 2026-09-03, debug, 600 frames, one held bubble across 24 shipped system
 3. **⚑⚑ Reopening decisions in k bubbles reopens what Phase 38 stage D closed.** The instance caps are tight and `claimVoice` steals the oldest (explosion 4, hit cues 6, weapon_fire 4 — 89 stolen in one measured fight), and `CombatEffects::kMaxParticles` is 2,000 for the whole game. Stage D fixed the *frame* question; a second fight that now re-targets spends the same voices, and the player's own explosion is what goes missing.
 4. **⚑ A commander is a captain, so every Phase 39 rule about captains is now asked of a thing that owns other things.** `killCaptain` on a commander, `m_lostCaptains`, dismissal, a commander with no ship, a commander under another commander. Each is an existing rule meeting a new shape.
 5. **The formation has no scale to be seen at unless stage D picks one.** Outside `kCaptainCruiseInside` the hulls are position-written by the pacing, and a formation there is a fiction nobody can photograph.
+
+
+##### What shipped, and the rulings behind it
+
+**Five stages, six commits, `game.unit` 440 → 460, `ui.unit` 99 → 100, `kSaveVersion` 45 → 47.** A fleet is a **commander captain** and the people who answer to them; one order — *work this field* — resolves by what the fleet is made of; the system a fleet holds gets a **real fight** rather than a die roll; the guard holds a **shape** the player picks; and the cost of all of it was measured rather than assumed.
+
+**The user's rulings.**
+
+1. **⚑⚑⚑⚑ THE FINE LAYER REOPENS FOR A SYSTEM THE PLAYER HAS POSTED A FLEET IN**, reversing Phase 39's ruling 12 exactly there and nowhere else — taken over the cheaper option of letting composition change the die roll's odds. **And the die roll must then STOP for those systems**, because a roll plus a real fight in one bubble is the *"a captain that is both things"* defect Phase 39's register names first, reached from the other side.
+2. **⚑⚑⚑ A FLEET IS A COMMANDER CAPTAIN WHO RE-ISSUES THE EXISTING FIVE ORDERS.** No sixth `OrderKind`, no `Fleet` object owning captains; `m_captains` stays the flat list every test, the Crew tab and `sol.captains()` read, which is what keeps Phase 39's five stages whole underneath.
+3. **⚑⚑⚑ NO HARD CAP ON A FLEET — REPORT INSTEAD (stage E).** Nothing refuses a fleet for being large, because the instrument proved the frame budget imposes no limit. What the Crew tab does instead is say what a large one actually *does*.
+4. **⚑⚑⚑ THE GUARD COUNT SCALES, ONE PER THREE MEMBERS, CAPPED AT THREE (stage E)** — replacing a reason stage C had deleted two stages earlier without either stage noticing.
+5. **⚑⚑ FORM ON THE MINER, FULL STOP (stage D).** Cover follows the people rather than the geography, so the shape moves with the work — taken over anchoring a formation on the rock or the dock.
+6. **⚑ THE ONE-GUARD COMPOSITION STAYS AS STAGE B WROTE IT, AND THE COUNT IS STAGE E's QUESTION** — taken when stage D found the reason had already been voided, and deliberately deferred rather than fixed in passing.
+
+##### ⚑⚑⚑⚑ Findings that generalise past this phase
+
+- **⚑⚑⚑⚑ A COST ARGUMENT CAN NAME THE WRONG LAYER, AND THIS PHASE'S HEADLINE IS ONE.** `rollHeldBubbleHazard` justified pricing an unwatched fight as a die roll because the alternative *"pays per-frame for a fight nobody is watching"* — and the second clause was **false**. `tickSystem` already runs steering, both collision passes, impact damage, projectiles and weapons for **every** bubble; the only thing Phase 38 scoped out is `collectDuePilotThinks`, and `kThinkInterval` is **0.5 s**. Reopening the fine layer bought a **2 Hz decision**, not a 60 Hz combat bill. *Check which clock a cost is actually on before pricing a decision against it.*
+- **⚑⚑⚑⚑ WHEN A STAGE CHANGES A NUMBER, GREP FOR THE COMMENTS THAT REASONED ABOUT IT.** Stage B posted exactly one guard and wrote its reason down in full: `heldBubbleRiskPerSecond` halves the loss rate once per patrol, so the second buys half of an already-halved number. Stage C then added a line to that same function returning `0.0f` for precisely the systems a fleet holds — so from that commit the one-guard rule was justified by **half of nothing**, while the code it justified stayed put and every test stayed green. *A deleted premise leaves no compiler error and no failing test; it leaves a correct-looking comment.*
+- **⚑⚑⚑⚑ A STEERING PRIMITIVE CAN BE A *HOLD* AND NOT AN *APPROACH*.** `steerFormation`'s desired velocity is `(slot − position) × 0.5` clamped to max speed, with **no braking term**, because all three of its callers were the player's own hull already flying alongside. Used as an approach it overshot and orbited at ~1,400 m whatever shape it had — so three shapes read as one — and the fleet lost two captains into the anchor. **The approach is `steerTravel`'s and the hold is `steerFormation`'s.** *A primitive with one class of caller has been tested against one class of caller.*
+- **⚑⚑⚑ AN ACTOR NOBODY GAVE A CROSSING TO.** Stage C's raid was put at a gate and pointed at a captain, and then **nothing carried it there**: measured 688,000–877,000 km from its mark, in Travel, at 314 m/s, the gap *oscillating with the miner's commute* rather than closing — about **twenty-five days** to arrive. Stage C's exit was true for the wrong reason, because the guard's unbounded `preyReach` had been doing all the travelling. Every captain, trader and miner in this game crosses its system on a **pace**; the raid was the one actor expected to fly it. *When you invent a new actor, ask which existing machinery moves it.*
+- **⚑⚑⚑ `preyReach` WAS WRONG A THIRD TIME IN TWO PHASES, AND THE THIRD IS THE OPPOSITE OF THE SECOND.** It is a *hunter's* bound — twice the gate distance — right for something that re-decides at 2 Hz and loses nothing on a long chase. A **guard with something to stand next to** is not that: on the patrol reach the guard flew 600,000 km after a raider and hit a **planet** at 164 m/s for 267 damage against a 100-hull Shuttle, and the miner died undefended a minute later. `kFormationLeash` is what a guard can reach *without cruising*. *The same constant is correct or catastrophic depending on what the asker is standing next to.*
+- **⚑⚑⚑ THREE COPIES OF ONE STATE TABLE, EACH INDEXED MODULO ITS OWN LENGTH.** A seventh `PilotState` came back wearing the **first** one's name, and the third copy is what Lua's `pilot_think` branches on — so `Formation` would have arrived as `"idle"` and the shipped script would have pulled the guard out of its slot twice a second, silently. `pilotStateName` is one public switch now. *A name table indexed `% size` cannot report a value it has not been taught; it reports a wrong one.*
+- **⚑⚑⚑ A FUNCTION THAT TAKES A REGISTRY AND READS `playerRegistry()` ANYWAY.** `gunneryFrame` had a `registry` parameter since it was written and made **seven** reads of the player's registry inside it, including `playerRegistry().entityFromIndex(entityIndex)` — a bare index resolved in the wrong frame. Pre-existing and unreachable until this phase made fights **start** where nobody is watching; it took the game down within five minutes of stage C's first drive. *A parameter is not a guarantee that the body uses it.*
+- **⚑⚑⚑ A PREDICATE EVERY HULL SATISFIES CANNOT DISCRIMINATE A ROLE.** "Miners mine, fighters fight, freighters haul" cannot be written with `shipGunPower > 0`, because `sol.mining_laser` carries `damage = 3.0`; nor with cargo, because `ShipDef::cargoCapacity` **defaults to 50** and every shipped hull has some. What is left is a **mining beam** — bought at an outfitter, always *replacing* a gun — which is the one absolute; the other two roles are a **comparison**, not a boolean. *A number can rank where a predicate cannot separate.*
+- **⚑⚑⚑ A GROUPED LIST STOPS BEING ITS OWN INDEX.** A `CaptainRow`'s position *was* the captain's index in the world, and grouping by fleet breaks that **silently** — the right people, working buttons, each aiming at somebody else. `CaptainRow` carries an explicit `index` now. ⚑ And the same class immediately tried to arrive through the door built to stop it: the Fleet section's first cut drew the **commander** on the "Leave" row. *The invariant worth keeping: a row always draws the captain its index names.*
+- **⚑⚑⚑ A SAVE THE GAME WRITES AND THEN REFUSES TO OPEN — THE FOURTH OF THAT EXACT SHAPE IN THIS ARC.** The captain loader bounded the roster by `fleetCount` (*"more captains than hulls: nobody could be holding them all"*) and **nobody has to be**: `hireCaptain` has no cap and asks for no ship. It survived a full green gate because every captain round-trip in the suite gives each captain a hull first. The bound is the galaxy's crew-hall **seats** now.
+- **⚑⚑ ONE LEVEL, ENFORCED IN BOTH DIRECTIONS, MAKES A CYCLE UNREPRESENTABLE RATHER THAN REFUSED.** A chain needs a captain who is both commanded and commanding; forbid that one shape and there is no path of length two for a cycle to close in — a check that cannot be wrong, against a walk that would have to stay right forever.
+- **⚑⚑ A COMMANDER IS A `who`, NOT AN INDEX.** Both `dismissCaptain` and `killCaptain` erase from the middle, so an index means dismissing somebody higher in the list silently hands a captain a new boss. ⚑ `kNoCommander` is `~0ull` rather than zero because `castKeyForCharacter` masks bit 63 **off** every character key — so the sentinel is *provably* not a person rather than merely unlikely to be one.
+- **⚑⚑ ONE RULE, TWO READERS, PAID PROPERLY.** `fleetWorkPlan` is `const`, returns a **reason string** and does not call `refuse`, because the Crew tab asks it **every frame** to label its own button and `refuse` writes a warning per call. That is also what makes the order **all-or-nothing**: three single orders can refuse on the third, and a mining captain whose order is revoked has already left the pad.
+- **⚑⚑ THE SIXTH CELL-WIDTH BUG OF THE ARC, CAUGHT BEFORE IT SHIPPED AND MEASURED.** The subordinate's refusal put **two** captain names in one sentence; the detail cell is **590 px ≈ 67 glyphs** and a captain's name runs to 15 characters, so the worst case is 69 and clips. It is one name now, with the assertion the five before it never had — **a test that COUNTS how many roster names appear in the note**.
+- **⚑⚑ AND THE SCROLL DEFECT THIS ARC HAD DEFERRED TWICE WAS NOT IN THE SCROLL.** `UiContext::endScroll` re-scrolled onto the **focused widget every frame** rather than only when the focus moved, so `beginScroll` applied the wheel and `endScroll` undid it in the same frame. The symptom — the list moves exactly one notch and stops — was mistaken twice for an input bug, and both earlier sessions instrumented the input path and correctly found it healthy. *When a widget will not respond to input, check whether something else writes the same state later in the same frame before instrumenting the input.*
+
+
+⚑⚑⚑⚑ **THE PHASE EXIT, FLOWN 2026-09-04 — AND THE FIRST THING IT DID WAS REFUTE THE PHASE'S OWN RISK REGISTER, IN THE PLAYER'S FAVOUR.** *"A three-role mining fleet works a field unattended and defends itself when raided, with no per-ship orders given."*
+
+⚑⚑⚑⚑ **RISK 2 SAID THE EXIT MIGHT BE A LAB RESULT BECAUSE A FLEET NEEDS THREE HULLS AND THREE CAPTAINS AT "THAT ONE DOCK IN EIGHTY-ONE SYSTEMS". THERE ARE FORTY-FOUR OF THEM, AND THE "ONE" WAS MEASURED ON THE WRONG GALAXY.** Phase 39's record reports *"78 of 81 systems have rock, 29 also have a crew hall, and exactly one has rock and a counter that sells hulls — Lyrth Gamma"*, and the playtest board has carried *"a mining captain can only be STARTED at one dock in eighty-one systems"* ever since. **That measurement came from `captain_tests`' `Fixture`, which calls `mergeDirectory(SOL_DEF_DATA_DIR)` and loads no mod layer** — an **80**-system galaxy with **one** faction. The game the player launches loads `discoverModLayers` and reports `85 systems, 169 lanes, 16 faction(s) (10 clans)`. Surveyed live in that galaxy, station by station: **68 of 85 systems have rock, and 44 docks pair rock with a crew hall.** *A number measured in a fixture is a fact about the fixture; the shipped galaxy is a different object and only the running game can be asked about it.*
+
+⚑⚑⚑ **AND THE SURVEY'S FIRST PREDICATE WAS WRONG, WHICH IS WHY THE FIRST ANSWER WAS TWENTY.** `sol.fields()` ends with an `"N field(s) in NAME"` summary and is therefore **never** the empty string, so `sol.fields() ~= ""` is true in every system in the galaxy and the first pass counted docks with no rock at all — including the one it then tried to start the fleet at, which refused with *"there is nothing to mine in this system"*. The honest test compares against the exact string a zero-field system produces. *A probe that always returns something is not a predicate.*
+
+⚑⚑⚑⚑ **THE FLEET, AND THE COMMANDER WAS GIVEN THE WORST HULL ON PURPOSE.** Beyryx Alpha (system 4, station 0) — rock in the system, a crew hall on the dock, and at survey time the most dangerous place in the galaxy at `danger 0.984 (raids 7.83, contest 0.97)`. Three captains hired out of the one hall, three Freighters bought, and three fits: **Corin Nakamura** the commander given one pulse cannon, **Dara Whelan** left with the freighter's authored mining laser, **Tarek Dunmore** given two pulse cannons. `sol.fleet_plan(4)` answered *before anything was given*:
+
+```
+Corin Nakamura's fleet would work this field
+   Dara Whelan: mine (carries a beam)
+   Tarek Dunmore: guard (the best guns of the rest)
+   Corin Nakamura: haul to Beyryx Beta (Beyryx)
+```
+
+**The boss hauls.** A resolution that read the roster rather than the fits would have put him on the beat, and it is the one property of stage B that a drive can photograph. One press:
+
+```
+Dara Whelan will work the rock in Beyryx and sell at Beyryx Alpha (4.0 units/s)
+Tarek Dunmore will patrol Beyryx
+Corin Nakamura will run Beyryx Alpha <-> Beyryx Beta (180 s a leg)
+Corin Nakamura's fleet works Beyryx - 1 mining, 1 guarding, 1 hauling
+```
+
+⚑⚑⚑⚑ **THEN THE PLAYER LEFT, AND THE FIRST HALF OF THE EXIT RAN FOR THIRTY-FIVE MINUTES WITH NOBODY WATCHING.** From Lyrth Alpha, two systems away: `Beyryx: 2 posted (a fleet) | loss 0.00000/s, raid 0.00120/s`. **The die roll is off** — ruling 1's stand-down, read as a number rather than inferred — **and the arrival is on**. The miner worked, sold, and came back: **4,418 → 4,328 → 3,879 → 3,340 → 2,881 cr a load**, which is Phase 39's saturation curve happening live at the exit, a captain filling their own warehouse one 180-unit load at a time. Credits over the window: **3,631,148 → 3,670,293, +39,145 cr earned by three people the player never spoke to again.** Nobody died; `2 posted` held throughout.
+
+⚑⚑⚑⚑ **THE SECOND HALF DID NOT ARRIVE ON ITS OWN, AND THE MEASUREMENT OF WHY IS THE EXIT'S REAL FINDING.** In thirty-five minutes at `0.00100–0.00120/s`, **zero raids arrived** against ~2.3 expected. It is not the `present >= 3` ceiling — the sky over Beyryx read `0 hostile hull(s)` for most of the window — it is the **rate itself, and the rate is capped**. `heldBubbleRaidRatePerSecond` is `danger × traderLossPerSecond`, and **`danger` saturates**: Beyryx read `danger 0.500` with `raids 1.44`, with `raids 5.12`, and still `0.500` after `sol.set_raid_intensity(4, 20.0)` — twenty. Only a live territorial contest moves it, and then only to `0.600`. **So a posted fleet is raided about once every fourteen to seventeen minutes at the ceiling, and there is no lever in the game that makes it sooner.** *The phase's headline promise is rate-limited to the edge of what a session can observe.*
+
+⚑⚑⚑ **AND THE EXIT FOUND WHY A FORCED RAID DOES NOT HELP EITHER, WHICH IS A REAL EDGE IN STAGE D's HOSTILITY RULE.** Mid-flight the log said **`[territory] Beyryx: Cara Cartel takes the system from Solar Navy`**. A captain's hull takes the local government's colours **once, at spawn** (`tickStationaryCaptains`), so three freighters went on wearing **Solar Navy** in a system the Cara Cartel now held. `rollHeldFleetRaid` then asks whether the aggressor would shoot at *the mark's* colours — stage D's fix, and correct — so committing a **Solar Navy** raid on Beyryx produces an aggressor who is the mark's own faction and the function returns having sent nobody. **The lever has to name a faction at war with the colours the captains happen to be wearing, which is not the same as one at war with the system's owner**, and after a territory flip those two answers differ. *A hull's faction is a snapshot; the ground under it is not.*
+
+⚑⚑ **SO THE DEFENCE HALF STANDS ON STAGE C's OWN FLIGHT RATHER THAN ON THE EXIT's**, and it is recorded that way rather than claimed: `84a8fce` flew a posted fleet two systems from the player, had the raid arrive as hulls, had the fight happen, and had the guard die for it — with `heldBubbleRiskPerSecond` asserted at zero throughout, so the die roll was provably not also running. The exit adds the half stage C could not show: **the same fleet, working, paying and surviving, for thirty-five unattended minutes in the most dangerous system in the galaxy.**
+
+
+⚑ **THE MEASUREMENTS WORTH KEEPING (shipped galaxy, seed 1701, mods loaded — 85 systems, 169 lanes, 16 factions).**
+
+| | |
+| --- | ---: |
+| Where a three-role fleet can be STARTED — systems with rock / docks pairing rock with a crew hall | **68** of 85 / **44** |
+| The same question in `captain_tests`' fixture, which loads **no mod layer** | an **80**-system, **1**-faction galaxy — which is where Phase 39's *"exactly one dock"* came from |
+| Seats per crew hall, and what a fleet of N therefore costs to staff | **3**, permanently — so N members is **⌈N/3⌉ crew halls** visited |
+| `steerFormation` call sites outside the player's own hull — at the spec / now | **0** / **1** (the fleet's guard) |
+| What a fleet of N costs per frame, debug, 400 frames, all-miner fleets in one sky | **0.300 ms** at 1, **0.332** at 2, **0.355** at 3, **0.441** at 6, **0.523** at 9, **0.608** at 12 |
+| The curve, and what it takes to spend a 16.7 ms frame | **linear, 0.028 ms a hull, no bend** — about **590** hulls in one sky |
+| The spec's own estimate for that number, from a regression across 24 shipped systems | **0.00199 ms an entity** — out by **fourteen times**, and the ruling survived it |
+| Collision bodies and pairs added per fleet member (Windows **and** Linux, byte-identical) | **+1 body**, and **+836 pairs** across 11 members |
+| The same curve's ratio, largest over smallest — MSVC / GCC | **2.03** / **1.48** (which is why the instrument asserts a RATIO, not a time) |
+| Guards a fleet posts — at 2, 3, 6, 9, 12 members | **1, 1, 2, 3, 3** — one per three, capped at `rollHeldFleetRaid`'s own ceiling |
+| What a fleet's system is exposed to | `danger × traderLossPerSecond`, **bare** — the die roll stands down and the arrival replaces it |
+| The arrival rate's ceiling, measured | **`danger` saturates at 0.500** without a live contest (unchanged at `raids` 1.44, 5.12 and **20.0**), **0.600** with one — so **0.00100–0.00120/s**, a raid every **14–17 minutes** |
+| The exit flight — unattended minutes / fleet sales / credits earned / captains lost | **35+** / **18** / **+47,312 cr** / **0** |
+| The miner filling its own market during the exit, per 180-unit load | **4,418 → 4,328 → 3,879 → 3,340 → 2,881 cr** — Phase 39's saturation curve, live |
+| Cell-width bugs found by measuring rather than by photographing | **1** (the two-name refusal), caught before it shipped — the sixth of the arc |
+| `game.unit` / `ui.unit` across the phase | **440 → 460** / **99 → 100** |
+| `kSaveVersion` | **45 → 47** — stage A the commander, stage D the shape; **B, C and E bumped nothing** |
+| Every other suite | unchanged: `sim` 241, `ecs` 16, `assets` 172, `forge` 96 |
+
 
 ---
 
