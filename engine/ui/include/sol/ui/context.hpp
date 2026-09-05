@@ -353,6 +353,12 @@ private:
     WidgetId m_hotId = kNoWidget;    // under the cursor
     WidgetId m_activeId = kNoWidget; // being pressed
     WidgetId m_focusId = kNoWidget;  // keyboard focus
+    // Last frame's focus, and whether it differs from this frame's. Only
+    // `endScroll` reads the flag, and only so that scrolling a focused widget
+    // into view happens when the focus MOVES rather than on every frame - see
+    // its comment for the defect that costs.
+    WidgetId m_focusIdLastFrame = kNoWidget;
+    bool m_focusMoved = false;
     // Caret position, in bytes, within whichever field holds focus. One
     // caret is enough because only one field can be focused at a time.
     std::size_t m_caret = 0;

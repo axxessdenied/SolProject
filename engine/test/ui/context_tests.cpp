@@ -576,6 +576,70 @@ SOL_TEST(ui_context_scroll_follows_keyboard_focus)
     SOL_CHECK(focusedTop + 40.0f <= kScrollView.max.y + 0.01f);
 }
 
+// ⚑⚑⚑⚑ THE WHEEL MUST BE ABLE TO SCROLL AWAY FROM A WIDGET THE MOUSE FOCUSED,
+// AND FOR THREE SESSIONS IT COULD NOT. `interact` records a focus rect for the
+// focused widget on EVERY frame it is built, and `endScroll` used to pull the
+// view back onto that rect on every frame too - so the wheel moved `offset` in
+// `beginScroll` and this undid it before the frame ended. The symptom is
+// specific and was mistaken twice for an input bug: the list moves exactly ONE
+// notch - the slack between the focused widget and the region's top edge - and
+// then refuses to move at all, while the input state says a wheel is arriving
+// and the cursor is inside.
+//
+// ⚑⚑⚑ CLICKING A ROW IS WHAT PUTS THE FOCUS THERE, which is why this was
+// reachable by an ordinary player and not only by a keyboard user: `interact`
+// takes keyboard focus on a click. In the shipped game the sequence was "open
+// the Crew tab, press Select on a captain, scroll down to their standing
+// order", and the last step was impossible for any roster long enough to push
+// that section below the fold.
+SOL_TEST(ui_context_the_wheel_scrolls_past_a_row_the_mouse_focused)
+{
+    UiContext ui;
+    float offset = 0.0f;
+    constexpr float kRowPitch = 50.0f;
+    constexpr int kRows = 12; // 600 tall in a 200 tall view
+
+    const auto frame = [&](const InputState& input) {
+        ui.beginFrame(input, kScreen);
+        const Rect content = ui.beginScroll(kScrollView, kRows * kRowPitch, offset);
+        for (int i = 0; i < kRows; ++i) {
+            ui.pushId(i);
+            const float top = content.min.y + static_cast<float>(i) * kRowPitch;
+            (void)ui.button({{content.min.x, top}, {content.max.x, top + 40.0f}}, "Row");
+            ui.popId();
+        }
+        ui.endScroll();
+        ui.endFrame();
+    };
+
+    // Press the top row the way a player selects something in a list. The
+    // click takes keyboard focus, which is the whole precondition.
+    const float rowY = kScrollView.min.y + 10.0f;
+    frame(pressAt(200.0f, rowY));
+    frame(releaseAt(200.0f, rowY));
+    SOL_REQUIRE(ui.focused() != sol::ui::kNoWidget); // anti-vacuity: something IS focused
+
+    // Now wheel, with the cursor inside the region, one notch at a time - and
+    // it has to keep going rather than stalling after the first.
+    frame(wheelAt(200.0f, 200.0f, -1.0f));
+    const float afterOne = offset;
+    SOL_CHECK(afterOne > 0.0f);
+    for (int i = 0; i < 8; ++i) {
+        frame(wheelAt(200.0f, 200.0f, -1.0f));
+    }
+    // ⚑ The assertion that fails on the old code, and it is the SECOND notch
+    // rather than the total that matters: the first one was always free.
+    SOL_CHECK(offset > afterOne);
+    // All the way to the end, which is what nine notches of a 34 px row over a
+    // 400 px overflow comes to.
+    SOL_CHECK(offset == kRows * kRowPitch - kScrollView.height());
+
+    // ⚑⚑ AND THE FOCUS IS STILL WHERE THE PLAYER PUT IT. Scrolling away from a
+    // selection must not clear it - the row stays selected, it is merely off
+    // screen, which is exactly what a wheel means.
+    SOL_CHECK(ui.focused() != sol::ui::kNoWidget);
+}
+
 SOL_TEST(ui_context_endscroll_without_a_region_is_harmless)
 {
     UiContext ui;

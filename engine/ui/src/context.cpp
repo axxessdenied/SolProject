@@ -45,6 +45,17 @@ void UiContext::beginFrame(const InputState& input, core::Vec2 screenSize, float
     m_hotId = kNoWidget;
     m_textFieldFocusedLastFrame = m_textFieldFocused;
     m_textFieldFocused = false;
+    // ⚑⚑⚑⚑ DID THE FOCUS JUST MOVE? `endScroll` scrolls a focused widget back
+    // into view, and until this line it did so on EVERY frame, which is the
+    // whole of the Crew tab's "the wheel moves the list one notch and stops"
+    // defect. See endScroll for the failure; what matters here is that focus
+    // is set at the END of a frame (by `endFrame`'s nav step, or mid-frame by
+    // a click in `interact`), so the frame on which the newly focused widget
+    // first records its rect is the frame AFTER the change - which is exactly
+    // the frame this flag is true for. `m_textFieldFocusedLastFrame` one field
+    // up is the same idiom for the same reason.
+    m_focusMoved = m_focusId != m_focusIdLastFrame;
+    m_focusIdLastFrame = m_focusId;
     m_frameOpen = true;
 }
 
@@ -724,7 +735,27 @@ void UiContext::endScroll()
     m_drawList.popClip();
 
     float& offset = *region.offset;
-    if (region.hasFocusRect) {
+    // ⚑⚑⚑⚑ ONLY WHEN THE FOCUS ACTUALLY MOVED, AND THE MISSING `m_focusMoved`
+    // IS A DEFECT THAT SURVIVED THREE SESSIONS OF BEING LOOKED FOR IN THE
+    // WRONG PLACE (Phase 40 stage E). The comment below always said the
+    // correction lands "like the focus change that caused it" - but that was a
+    // statement about intent, not a condition, and the block ran every frame a
+    // focused widget lived inside the region. So `beginScroll` applied the
+    // wheel to `offset` and this pulled it straight back, on the same frame,
+    // for ever: the Crew tab moved ONE notch (34 px - the slack between the
+    // focused button and the region's top edge) and then refused to move at
+    // all. Two earlier sessions instrumented the INPUT and found it perfectly
+    // healthy, which it is; the second writer of the same state was here.
+    //
+    // ⚑⚑ The A/B that names it, and it needs no instrumentation: with the
+    // focus ring on a row's `Select` button, eight wheel notches move the list
+    // one notch; with the focus on the TAB button above - outside the region,
+    // so `interact` records no rect here - the same eight run it to the end.
+    //
+    // ⚑ Scrolling away from a focused widget is therefore allowed now, which
+    // is what a wheel MEANS. Keyboard nav still drags the view along, because
+    // nav changes the focus and this runs on the frame after it does.
+    if (region.hasFocusRect && m_focusMoved) {
         // Focus rects are in screen space at the offset they were built with;
         // undo it to get content space, then move the window onto them. The
         // correction lands next frame, like the focus change that caused it.
